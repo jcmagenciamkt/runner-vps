@@ -25,7 +25,7 @@ O CI do projeto (`.github/workflows/ci.yml`) roda os dois. Rode antes de abrir o
 
 ## Estrutura
 - `instalar.sh` — roda **na VPS, como root**, enviado por `ssh … 'bash -s'`. Subcomandos `--so-checar`, `--status`, `--remover`.
-- `registrar.sh` — roda **na máquina de quem administra**. Gera o token pela API (`gh api`), monta as variáveis e envia o `instalar.sh` pelo SSH. O token vai pelo fluxo de entrada do SSH, nunca pela linha de comando.
+- `registrar.sh` — roda **na máquina de quem administra**. Gera o token pela API (`gh api`), monta as variáveis e envia o `instalar.sh` pelo SSH. O token vai pelo fluxo de entrada do SSH, nunca pela linha de comando. Com `--interativo` (ou sem argumentos num terminal) abre um assistente que pergunta e valida; ele não grava nada e nunca pergunta o token.
 - `gancho-fim.sh` — roda na VPS, como o usuário do runner, ao fim de cada job.
 - Os modelos da unidade systemd e dos limites ficam **dentro** do `instalar.sh` (ele viaja sozinho pelo stdin do SSH). `testes/` — harness e testes. `docs/` — spec e plano.
 

@@ -24,6 +24,26 @@ O runner roda num usuário próprio, **sem sudo e sem o grupo `docker`**, com um
 
 O `registrar.sh` gera o token de registro pela API (`gh api … registration-token`), monta as variáveis e envia o `instalar.sh` pelo SSH. O token vai pelo fluxo de entrada do SSH, junto com o script: **não passa pela linha de comando, pelo histórico nem por arquivo**; dentro da VPS, chega ao `config.sh` do runner por variável de ambiente, só durante a chamada, e nunca é gravado.
 
+### Assistente interativo
+
+Se preferir ser guiado, rode sem argumentos num terminal (ou use `--interativo`):
+
+```bash
+./registrar.sh
+```
+
+Ele pergunta, valida e só instala depois da sua confirmação:
+
+1. confere se o `gh` está autenticado (antes de qualquer pergunta);
+2. VPS (`usuário@host` ou `usuário@host:porta`) e chave SSH, com **teste de conexão de verdade**;
+3. repositório (`<dono>/<repo>`) ou organização, conferindo que você é **administrador**;
+4. nome da instância (sugerido a partir do alvo), avisando se **já existe** na VPS;
+5. opções avançadas, só se você quiser: memória máxima, cota de CPU, rótulos e Docker rootless;
+6. o diagnóstico `--so-checar`: se der "não cabe", para aí, sem gerar token;
+7. um resumo e a confirmação (padrão: não). Só então instala, mostra o `--status` e imprime o **comando equivalente sem o assistente**, para repetir noutra VPS.
+
+Respostas inválidas repetem a pergunta; Ctrl-C ou fim da entrada cancelam sem instalar. O assistente **não grava nada em disco** (nem perfil, nem histórico) e **nunca pergunta o token**: ele é gerado pelo `gh` só no passo de instalação. Argumentos que você já passar (`--vps`, `--repo`, `--nome`…) pulam as perguntas deles. Como o `ssh` roda com `BatchMode`, uma chave com senha precisa estar no `ssh-agent`.
+
 Outras formas:
 
 ```bash
@@ -33,7 +53,7 @@ Outras formas:
 ./registrar.sh … --mostrar                                     # imprime o que seria enviado (token redigido) e não conecta
 ```
 
-Opções: `--org <org>` no lugar de `--repo`; `--rotulos a,b`; `--nome-github`; `--sem-docker`; `--var CHAVE=valor` (repetível) para qualquer variável da tabela abaixo. `./registrar.sh --help` lista tudo.
+Opções: `--interativo` (assistente); `--org <org>` no lugar de `--repo`; `--rotulos a,b`; `--nome-github`; `--sem-docker`; `--var CHAVE=valor` (repetível) para qualquer variável da tabela abaixo. `./registrar.sh --help` lista tudo.
 
 Sem o `registrar.sh`, o equivalente à mão é enviar as variáveis e o script pelo stdin do SSH (o `printf` é um comando interno do shell, então o token não aparece em `ps`; evite colar o token literal no terminal, por causa do histórico):
 
