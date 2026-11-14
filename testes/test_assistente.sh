@@ -80,6 +80,8 @@ chmod +x "$TMP/bin/gh" "$TMP/bin/ssh" "$TMP/bin/tcp"
 : > "$TMP/chave"   # uma "chave" que existe
 
 export GH_CMD="$TMP/bin/gh" SSH_CMD="$TMP/bin/ssh" TCP_CMD="$TMP/bin/tcp" INSTALAR_SH="$TMP/instalar.sh"
+# Nunca ler o ~/.ssh/config real: por padrão, um arquivo que não existe.
+export SSH_CONFIG_FILE="$TMP/ssh_config_inexistente"
 
 novo_cenario() {
   rm -rf "$TMP/ctl" "$TMP/out" "$TMP/err" "$TMP"/stdin.*
@@ -284,6 +286,65 @@ afirmar "--vps usuário@host:porta por argumento continua aceito" "$([ "$codigo"
 novo_cenario
 codigo="$(assistente n s -- --vps 'a b' --repo dono/repo --nome exemplo)"
 afirmar "--vps inválido por argumento: saída 2 e nada chamado além do gh auth" "$([ "$codigo" = 2 ] && ! houve '^ssh' && ! houve '^tcp' && echo 0 || echo 1)"
+
+# 19. primeira pergunta: Host salvo do ~/.ssh/config ou IP
+cat > "$TMP/ssh_config" <<'CFG'
+# meus servidores
+Host alfa beta
+  HostName x
+Host *
+  ServerAliveInterval 30
+host Gama # com nota
+  User fulano
+Host *.exemplo !proibido
+Host alfa
+Match host x
+  User ninguem
+CFG
+export_config() { export SSH_CONFIG_FILE="$TMP/ssh_config"; }
+sem_config() { export SSH_CONFIG_FILE="$TMP/ssh_config_inexistente"; }
+
+novo_cenario; export_config
+printf 'alfa alfa.exemplo 2222 deploy\nbeta beta.exemplo 22 root\n' > "$TMP/ctl/aliases"
+codigo="$(assistente '' 2 dono/repo '' n s)"
+afirmar "Host salvo: Enter na primeira pergunta escolhe a lista; escolher 2 conclui com 0" "$([ "$codigo" = 0 ] && instalou && echo 0 || echo 1)"
+afirmar "a pergunta 'Como conectar' apareceu" "$(saida_tem 'Como conectar'; echo $?)"
+afirmar "a lista mostra usuário@hostname:porta de cada Host" \
+  "$(saida_tem '1) alfa  (deploy@alfa.exemplo:2222)' && saida_tem '2) beta  (root@beta.exemplo:22)'; echo $?)"
+afirmar "a lista tem exatamente alfa, beta e Gama (sem curingas, sem repetição, sem Match)" \
+  "$(saida_tem '3) Gama' && ! saida_tem '4) ' && ! grep -qE '[0-9]\) (\*|!|.*proibido|ninguem)' "$TMP/out"; echo $?)"
+afirmar "escolher o 2 usa o alias beta: sem tcp, sem porta, usuário nem chave" \
+  "$(houve 'ssh -o BatchMode=yes -o ConnectTimeout=10 beta true' && houve 'ssh -o BatchMode=yes beta bash -s -- *$' && ! houve '^tcp ' && ! saida_tem 'Porta do SSH' && ! saida_tem 'Usuário do SSH'; echo $?)"
+afirmar "o comando equivalente usa --vps beta" "$(saida_tem '--vps beta'; echo $?)"
+
+novo_cenario; export_config
+codigo="$(assistente 1 0 4 x '' 3 dono/repo '' n s)"
+afirmar "número inválido (0, 4, x, vazio) repete só a escolha e o 3 conclui" \
+  "$([ "$codigo" = 0 ] && houve 'ssh -o BatchMode=yes -o ConnectTimeout=10 Gama true' && echo 0 || echo 1)"
+afirmar "a escolha inválida não chegou ao ssh" "$(! houve 'ssh .* (0|4|x) true'; echo $?)"
+
+novo_cenario; export_config
+codigo="$(assistente x 1 3 dono/repo '' n s)"
+afirmar "resposta inválida à primeira pergunta repete (x) e depois aceita" "$([ "$codigo" = 0 ] && saida_tem 'Responda 1 ou 2' && echo 0 || echo 1)"
+
+novo_cenario; export_config
+codigo="$(assistente 2 vps.exemplo '' root '' dono/repo '' n s)"
+afirmar "escolher 'IP ou nome' (2) segue host, porta, SSH, usuário e chave" \
+  "$([ "$codigo" = 0 ] && houve '^tcp vps\.exemplo 22$' && houve 'ssh -o BatchMode=yes -o ConnectTimeout=10 root@vps\.exemplo true' && echo 0 || echo 1)"
+
+printf 'Host *\n  ServerAliveInterval 30\n' > "$TMP/ssh_config_so_curinga"
+novo_cenario; export SSH_CONFIG_FILE="$TMP/ssh_config_so_curinga"
+codigo="$(assistente "${CONEXAO[@]}" dono/repo '' n s)"
+afirmar "config só com 'Host *': a pergunta não aparece e o fluxo vai direto ao IP" "$([ "$codigo" = 0 ] && ! saida_tem 'Como conectar' && houve '^tcp ' && echo 0 || echo 1)"
+
+novo_cenario; sem_config
+codigo="$(assistente "${CONEXAO[@]}" dono/repo '' n s)"
+afirmar "sem ~/.ssh/config: a pergunta não aparece" "$([ "$codigo" = 0 ] && ! saida_tem 'Como conectar' && echo 0 || echo 1)"
+
+novo_cenario; export_config
+codigo="$(assistente n s -- --vps beta --repo dono/repo --nome exemplo)"
+afirmar "--vps por argumento pula a pergunta mesmo com Hosts no config" "$([ "$codigo" = 0 ] && ! saida_tem 'Como conectar' && instalou && echo 0 || echo 1)"
+sem_config
 
 # 13. o script não lê o token do teclado e o assistente não grava nada em disco
 afirmar "registrar.sh não lê o token do teclado" "$(! grep -nE 'read .*(token|TOKEN)' "$script"; echo $?)"

@@ -29,7 +29,7 @@
 # Pré-requisitos: gh autenticado (gh auth status) com acesso de administrador ao repositório
 # (ou à organização), ssh, e o instalar.sh ao lado deste script.
 #
-# Variáveis só de teste (padrão: o comando real): GH_CMD, SSH_CMD, TCP_CMD, INSTALAR_SH.
+# Variáveis só de teste (padrão: o comando real): GH_CMD, SSH_CMD, TCP_CMD, INSTALAR_SH, SSH_CONFIG_FILE.
 set -euo pipefail
 
 aqui="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -132,21 +132,76 @@ tcp_ssh() {
   "${limite[@]}" bash -c 'exec 3<> "/dev/tcp/$1/$2" || exit 1; IFS= read -r -t 5 banner <&3 || true; case "${banner:-}" in SSH-*) exit 0 ;; esac; exit 1' _ "$1" "$2" 2> /dev/null
 }
 
-# Se <nome> é um Host do ~/.ssh/config (o ssh -G, que não conecta, resolve outro hostname),
-# imprime usuário@hostname:porta.
-alias_do_ssh_config() {
+# O que o ssh -G (que não conecta) resolve para <nome>: imprime usuário@hostname:porta.
+resolver_ssh() {
   local saida h p u
   saida="$("$ssh_cmd" -G "$1" 2> /dev/null < /dev/null)" || return 1
   h="$(awk '$1 == "hostname" { print $2; exit }' <<< "$saida")"
   p="$(awk '$1 == "port" { print $2; exit }' <<< "$saida")"
   u="$(awk '$1 == "user" { print $2; exit }' <<< "$saida")"
-  if [ -z "$h" ] || [ "${h,,}" = "${1,,}" ]; then return 1; fi
+  if [ -z "$h" ]; then return 1; fi
   printf '%s@%s:%s' "$u" "$h" "$p"
+}
+
+# Se <nome> é um Host do ~/.ssh/config (o ssh -G resolve outro hostname), imprime usuário@hostname:porta.
+alias_do_ssh_config() {
+  local r h
+  r="$(resolver_ssh "$1")" || return 1
+  h="${r#*@}"; h="${h%:*}"
+  if [ "${h,,}" = "${1,,}" ]; then return 1; fi
+  printf '%s' "$r"
+}
+
+# Hosts concretos do ~/.ssh/config, um por linha, sem repetição: sem curingas (*, ?, !) e sem
+# comentários. Só lê o arquivo principal; Include não é seguido.
+hosts_do_ssh_config() {
+  local arquivo="${SSH_CONFIG_FILE:-$HOME/.ssh/config}" h
+  if [ ! -r "$arquivo" ]; then return 0; fi
+  while IFS= read -r h; do
+    if [[ "$h" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then printf '%s\n' "$h"; fi
+  done < <(awk 'tolower($1) == "host" {
+    for (i = 2; i <= NF; i++) {
+      if ($i ~ /^#/) break
+      if ($i ~ /[*?!]/) continue
+      if (!($i in visto)) { visto[$i] = 1; print $i }
+    }
+  }' "$arquivo")
+}
+
+# Lista os Hosts salvos e pergunta qual usar. Define $vps (o alias) e limpa $chave.
+escolher_host_salvo() { # <hosts…>
+  local -a hosts=("$@")
+  local i n descricao
+  printf 'Hosts do seu ~/.ssh/config:\n'
+  for i in "${!hosts[@]}"; do
+    descricao="$(resolver_ssh "${hosts[$i]}")" || descricao="sem detalhes"
+    printf '  %d) %s  (%s)\n' "$((i + 1))" "${hosts[$i]}" "$descricao"
+  done
+  while :; do
+    pergunta n "Escolha um número (1-${#hosts[@]})"
+    if [[ "$n" =~ ^[0-9]+$ ]] && [ "$n" -ge 1 ] && [ "$n" -le "${#hosts[@]}" ]; then
+      vps="${hosts[$((n - 1))]}"; chave=""; return 0
+    fi
+    aviso "escolha um número de 1 a ${#hosts[@]}."
+  done
 }
 
 # Pergunta o servidor (host, porta), verifica o SSH, e só então usuário e chave. Define $vps e $chave.
 pedir_servidor() {
-  local entrada porta usuario resolvido
+  local entrada porta usuario resolvido modo
+  local -a salvos=()
+  mapfile -t salvos < <(hosts_do_ssh_config)
+  if [ "${#salvos[@]}" -gt 0 ]; then
+    printf 'Como conectar na VPS?\n  1) usar um Host salvo no seu ~/.ssh/config\n  2) informar o IP ou nome do servidor\n'
+    while :; do
+      pergunta modo "Escolha" 1
+      case "$modo" in
+        1) escolher_host_salvo "${salvos[@]}"; return 0 ;;
+        2) break ;;
+        *) aviso "Responda 1 ou 2." ;;
+      esac
+    done
+  fi
   while :; do
     pergunta entrada "Servidor: IP ou nome do host (ou um Host do seu ~/.ssh/config)"
     if ! valida_host "$entrada"; then continue; fi

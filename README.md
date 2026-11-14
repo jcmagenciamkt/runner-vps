@@ -35,7 +35,7 @@ Se preferir ser guiado, rode sem argumentos num terminal (ou use `--interativo`)
 Ele pergunta, valida e só instala depois da sua confirmação:
 
 1. confere se o `gh` está autenticado (antes de qualquer pergunta);
-2. servidor: primeiro **só o IP ou nome do host**; depois a **porta** (Enter = 22). Ele **verifica se algo responde como SSH** nessa porta antes de seguir, e só então pergunta o **usuário** (Enter = `root`) e a chave. Por fim, testa a conexão de verdade. Se o nome digitado for um `Host` do seu `~/.ssh/config`, ele avisa que achou, **pula porta, usuário e chave** (o `ssh` usa o que está no arquivo) e testa por ali;
+2. **como conectar**: se o seu `~/.ssh/config` tiver `Host` salvos, a primeira pergunta é *"usar um Host salvo (1) ou informar o IP (2)"*. Escolhendo **1**, ele lista os Hosts numerados, cada um com `usuário@hostname:porta`, e você escolhe pelo número; usuário, porta e chave vêm do arquivo (inclusive `IdentityFile` e `ProxyJump`). Escolhendo **2** (ou se não houver Hosts salvos, caso em que a pergunta nem aparece), ele pede **só o IP ou nome do host**, depois a **porta** (Enter = 22), **verifica se algo responde como SSH** nela e só então pergunta o **usuário** (Enter = `root`) e a chave. Nos dois casos termina com um teste de conexão de verdade. Só o arquivo `~/.ssh/config` é lido: `Include` não é seguido (mas um alias vindo de um `Include` ainda funciona se você digitar o nome em **2**);
 3. repositório (`<dono>/<repo>`) ou organização, conferindo que você é **administrador**;
 4. nome da instância (sugerido a partir do alvo), avisando se **já existe** na VPS;
 5. opções avançadas, só se você quiser: memória máxima, cota de CPU, rótulos e Docker rootless;
