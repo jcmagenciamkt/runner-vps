@@ -178,6 +178,20 @@ e o equivalente na VPS vem de `HOSTS_EXTRAS`, `PACOTES_EXTRAS`, `EXTRAS_SH` ou `
 - **`--repos a/x,b/y`** instala **uma instância por repositório**. O nome de cada uma vem do nome do repositório (minúsculas, o que não for letra ou número vira `-`: `Beta_X.y` vira `beta-x-y`); nomes repetidos são recusados. O painel do servidor roda **uma vez, antes de qualquer token**; a memória que ele diz que cabe é **dividida em partes iguais** (arredondada para baixo, em múltiplos de 256 MB) e cada instância recebe a sua fatia em `MEMORY_MAX_MB`. Se a fatia ficar abaixo de `MEM_MIN_MB` (2048 MB por padrão), nada é instalado e a mensagem diz o que fazer: menos repositórios, uma VPS maior ou `--var MEM_MIN_MB=1024`. Com `--var MEMORY_MAX_MB=<MB>` você define a fatia à mão e o cálculo é pulado. A cota de CPU não é dividida: cada instância usa a que o diagnóstico calcular. Cada instalação gera o seu próprio token; a primeira que falhar **interrompe o lote** e a mensagem lista o que foi instalado e o que não foi tentado (reaplicar é idempotente). `--repos` só instala: não combina com `--repo`, `--org`, `--nome`, `--nome-github`, `--status`, `--so-checar`, `--remover` nem `--mostrar`.
 - **Um runner para todos os repositórios de uma conta:** o GitHub só oferece runner de **organização** (`--org <org>`, já suportado). Conta pessoal não tem runner compartilhado; `--repos` é o caminho, com uma instância por repositório.
 
+## Perfil (`--perfil`) e runner nativo
+
+Para não repetir as mesmas opções a cada comando, guarde-as num arquivo **fora do repositório** e use `--perfil`:
+
+```bash
+cp exemplos/perfil-nativo.perfil ~/.config/runner-vps/meu-servidor.perfil   # troque os marcadores <…>
+./registrar.sh --perfil ~/.config/runner-vps/meu-servidor.perfil
+./registrar.sh --perfil ~/.config/runner-vps/meu-servidor.perfil --status
+```
+
+- Uma `chave=valor` por linha; a chave é o nome da opção sem `--`: `vps`, `chave`, `local`, `repo`, `org`, `repos`, `nome`, `nome-github`, `rotulos`, `sem-docker` (as duas de uma flag só aceitam o valor `1`) e `var=CHAVE=valor` (repetível). Linhas em branco e comentários inteiros (`#`) são ignorados.
+- O arquivo **não é executado nem expandido** (só o `~/` inicial de `chave` vira o seu HOME), **não aceita token** (o `registrar.sh` o gera pelo `gh`) e **perde para a linha de comando**: `--perfil x.perfil --nome outro` usa `outro`.
+- **Runner nativo (sem Docker):** `sem-docker=1` (ou `DOCKER_ROOTLESS=0`). O runner roda no próprio sistema, como um usuário dedicado (`runner-<nome>`) sem `sudo` e sem o grupo `docker`, com os limites de memória e CPU da instância; não há daemon do Docker, então o consumo é só o do runner e dos jobs. Workflows que precisam de `docker` não funcionam nesse modo.
+
 ## Operação
 
 - **Ver o estado:** `./registrar.sh --vps root@<vps> --nome <nome> --status` (usuário, serviços, limites, registro e a última linha do log).

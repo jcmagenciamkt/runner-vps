@@ -258,6 +258,16 @@ Modificar: `README.md` (Task 5).
 - [x] README e design.
 - [x] Commit: `feat: --local (instalar nesta máquina) e --repos (uma instância por repositório)`.
 
+## Task 16: perfil (`--perfil`)
+
+**Files:** modificar `registrar.sh`, criar `testes/test_perfil.sh`, `exemplos/perfil-nativo.perfil`, `README.md`, `docs/design.md`.
+**Regras:** design 4.6c. Perfil nunca é executado nem aceita token.
+- [x] Testes primeiro (`test_perfil.sh`, só com `--mostrar`): perfil completo, linha de comando vence, posição do `--perfil`, `local=1`, chave desconhecida, token (duas formas, valor nunca impresso), linha sem `=`, flags com valor diferente de 1, arquivo inexistente, `--perfil` sem argumento, perfil dentro de perfil, nada executado nem expandido, CRLF, exemplo só com chaves conhecidas e sem IP real.
+- [x] Implementar `perfil_para_args` e o pré-processamento dos argumentos.
+- [x] Mutação: 7 mutantes; os dois do token sobreviviam (outra checagem os barrava) e ganharam teste da mensagem.
+- [x] README e design.
+- [x] Commit: `feat: --perfil (opções do servidor e do runner nativo num arquivo)`.
+
 ## Fecho
 
 - [x] `shellcheck` limpo e `testes/rodar.sh` verde, local e no CI do projeto.
