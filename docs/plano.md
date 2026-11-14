@@ -117,11 +117,11 @@ Modificar: `README.md` (Task 5).
 ## Task 5: README final
 
 **Files:** modificar `README.md`.
-- [ ] Tirar o aviso "em planejamento". Passo a passo: pré-requisitos (`gh` como administrador, SSH root); `registrar.sh` como caminho principal, com os exemplos de cada subcomando, e o equivalente à mão pelo stdin do SSH; `--so-checar`, `--status`, `--remover`; tabela de todas as variáveis com padrão; a convenção do consumidor (4.5) com o trecho de YAML; operação (ver, se cair, disco cheio); limites de segurança; como rodar os testes (`testes/rodar.sh`).
-- [ ] Commit: `docs: README com instalação, variáveis, convenção do consumidor e operação`.
+- [x] Tirar o aviso "em planejamento". Passo a passo: pré-requisitos (`gh` como administrador, SSH root); `registrar.sh` como caminho principal, com os exemplos de cada subcomando, e o equivalente à mão pelo stdin do SSH; `--so-checar`, `--status`, `--remover`; tabela de todas as variáveis com padrão; a convenção do consumidor (4.5) com o trecho de YAML; operação (ver, se cair, disco cheio); limites de segurança; como rodar os testes (`testes/rodar.sh`).
+- [x] Commit: `docs: README com instalação, variáveis, convenção do consumidor e operação`.
 
 ## Fecho
 
-- [ ] `shellcheck` limpo e `testes/rodar.sh` verde, local e no CI do projeto.
-- [ ] Nenhum nome, domínio, IP ou caminho de VPS ou repositório real em nenhum arquivo (`git grep -nE '[0-9]{1,3}(\.[0-9]{1,3}){3}'` só pode achar `127.0.0.1`).
+- [x] `shellcheck` limpo e `testes/rodar.sh` verde, local e no CI do projeto.
+- [x] Nenhum nome, domínio, IP ou caminho de VPS ou repositório real em nenhum arquivo (`git grep -nE '[0-9]{1,3}(\.[0-9]{1,3}){3}'` só pode achar `127.0.0.1`).
 - [ ] Tag `v0.1.0` depois da primeira instalação real bem-sucedida.
