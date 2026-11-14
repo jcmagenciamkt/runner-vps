@@ -1,0 +1,14 @@
+# Perfil de exemplo: runner NATIVO (sem Docker), com usuário dedicado e sem sudo, numa VPS comum.
+# Copie para fora do repositório (por exemplo ~/.config/runner-vps/<nome>.perfil), troque os marcadores
+# <…> e use:  ./registrar.sh --perfil ~/.config/runner-vps/<nome>.perfil
+# Argumentos da linha de comando vencem o perfil. O token NUNCA vai aqui: o registrar.sh o gera pelo gh.
+# Uma chave por linha (chave=valor); comentários só em linhas inteiras começadas por #.
+
+vps=<usuario>@<vps>:<porta>
+chave=~/.ssh/<chave>
+repo=<dono>/<repo>
+nome=<nome>
+rotulos=self-hosted,linux,x64
+sem-docker=1
+var=MEMORY_MAX_MB=2048
+var=CPU_QUOTA=150

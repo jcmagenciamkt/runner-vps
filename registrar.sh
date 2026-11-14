@@ -35,6 +35,8 @@
 #                            DISCO_MIN_GB, MEMORY_MAX_MB, CPU_QUOTA, HOSTS_EXTRAS, PACOTES_EXTRAS,
 #                            EXTRAS_SH, EXTRAS_SHA256, ENV_EXTRAS, RUNNER_VERSAO, RUNNER_SHA256
 #   --mostrar                imprime o que seria enviado (token redigido) e não conecta
+#   --perfil <arquivo>       lê opções de um arquivo chave=valor (veja exemplos/perfil-nativo.perfil); a linha
+#                            de comando vence o perfil; token nunca vai no arquivo
 #   --interativo             assistente para instalar (argumentos já passados pulam as perguntas)
 #   --quieto                 não imprime as linhas de andamento (==>); só o que o instalador responde
 #   -h, --help
@@ -66,6 +68,47 @@ vps=""; chave=""; repo=""; org=""; nome=""; nome_github=""; rotulos=""
 modo="instalar"; sem_docker=0; mostrar=0; interativo=0; local_=0; repos=""
 n_args=$#
 declare -a extras=()
+
+# ---------- perfil ----------
+# --perfil <arquivo>: linhas chave=valor que viram argumentos (a chave é o nome da opção sem "--"). O arquivo
+# nunca é executado nem expandido, não aceita token e perde para a linha de comando. As opções de uma
+# flag só (local, sem-docker) valem com o valor 1; var= pode repetir.
+perfil_para_args() { # <arquivo>; imprime um argumento por linha
+  local arq="$1" linha chave_p valor_p
+  [ -r "$arq" ] || erro "não consegui ler o perfil: $arq"
+  while IFS= read -r linha || [ -n "$linha" ]; do
+    linha="${linha%$'\r'}"
+    [[ "$linha" =~ ^[[:space:]]*(#.*)?$ ]] && continue
+    [[ "$linha" =~ ^[[:space:]]*([a-z-]+)=(.*)$ ]] || erro "perfil $arq: linha sem chave=valor: use chave=valor, uma por linha"
+    chave_p="${BASH_REMATCH[1]}"; valor_p="${BASH_REMATCH[2]}"
+    case "$chave_p" in
+      token | runner-token) erro "perfil $arq: o token não vai no perfil; o registrar.sh o gera pelo gh" ;;
+      local | sem-docker)
+        [ "$valor_p" = 1 ] || erro "perfil $arq: $chave_p só aceita o valor 1 (para desligar, tire a linha)"
+        printf '%s\n' "--$chave_p" ;;
+      vps | chave | repo | org | repos | nome | nome-github | rotulos)
+        if [ "$chave_p" = chave ]; then case "$valor_p" in \~/*) valor_p="$HOME/${valor_p#\~/}" ;; esac; fi
+        printf '%s\n%s\n' "--$chave_p" "$valor_p" ;;
+      var)
+        case "$valor_p" in RUNNER_TOKEN=*) erro "perfil $arq: o token não vai no perfil; o registrar.sh o gera pelo gh" ;; esac
+        printf '%s\n%s\n' "--var" "$valor_p" ;;
+      *) erro "perfil $arq: chave desconhecida \"$chave_p\" (use vps, chave, local, repo, org, repos, nome, nome-github, rotulos, sem-docker ou var)" ;;
+    esac
+  done < "$arq"
+}
+
+declare -a args_perfil=() args_linha=()
+while [ $# -gt 0 ]; do
+  if [ "$1" = --perfil ]; then
+    [ -n "${2:-}" ] || erro "--perfil espera um arquivo"
+    _lidos="$(perfil_para_args "$2")" || exit 2   # (o erro sai de dentro da substituição: repete o código aqui)
+    if [ -n "$_lidos" ]; then mapfile -t _novos <<< "$_lidos"; args_perfil+=("${_novos[@]}"); fi
+    shift 2
+  else
+    args_linha+=("$1"); shift
+  fi
+done
+set -- "${args_perfil[@]}" "${args_linha[@]}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
