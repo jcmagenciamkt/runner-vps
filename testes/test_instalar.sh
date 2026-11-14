@@ -16,7 +16,7 @@ tudo_saida() { cat "$TMP/out" "$TMP/err"; }
 tem() { grep -qF -- "$2" "$1"; }                      # tem <arquivo> <texto>
 chamou() { grep -qF -- "$1" "$TMP/chamadas.log"; }    # chamou <texto>
 linha_de() { grep -nF -- "$1" "$TMP/chamadas.log" | tail -n 1 | cut -d: -f1; }
-instalar_exemplo() { RUNNER_NOME=exemplo RUNNER_URL=$URL rodar "$@"; }
+instalar_exemplo() { RUNNER_NOME=exemplo RUNNER_URL=$URL rodar; }
 R() { printf '%s' "$TMP/raiz"; }
 H() { printf '%s' "$TMP/raiz/opt/runner-vps/exemplo"; }
 
