@@ -37,11 +37,11 @@ Ele pergunta, valida e só instala depois da sua confirmação:
 
 1. confere se o `gh` está autenticado (antes de qualquer pergunta);
 2. **como conectar**: se o seu `~/.ssh/config` tiver `Host` salvos, a primeira pergunta é *"usar um Host salvo (1) ou informar o IP (2)"*. Escolhendo **1**, ele lista os Hosts numerados, cada um com `usuário@hostname:porta`, e você escolhe pelo número; usuário, porta e chave vêm do arquivo (inclusive `IdentityFile` e `ProxyJump`). Escolhendo **2** (ou se não houver Hosts salvos, caso em que a pergunta nem aparece), ele pede **só o IP ou nome do host**, depois a **porta** (Enter = 22), **verifica se algo responde como SSH** nela e só então pergunta o **usuário** (Enter = `root`) e a chave. Nos dois casos termina com um teste de conexão de verdade. Só o arquivo `~/.ssh/config` é lido: `Include` não é seguido (mas um alias vindo de um `Include` ainda funciona se você digitar o nome em **2**);
-3. **se a VPS já tiver instâncias** (e você não passou `--nome`, `--repo` nem `--org`), um **menu**: *instalar uma instância nova* (padrão, segue os passos abaixo), *ver o estado*, *ver ou alterar a configuração* ou *remover* uma instância (escolhida pelo número, ou direto se houver só uma). Alterar a configuração mostra o que está gravado e pergunta a **memória máxima** e a **cota de CPU** (Enter mantém); só o que mudou é reaplicado, **sem token e sem registrar de novo**. Remover confirma (padrão: não), confere que você é administrador e usa o repositório ou a organização gravados na configuração;
+3. **se a VPS já tiver instâncias** (e você não passou `--nome`, `--repo` nem `--org`), um **menu**: *instalar uma instância nova* (padrão, segue os passos abaixo), *ver o estado*, *ver ou alterar a configuração* ou *remover* uma instância (escolhida pelo número, ou direto se houver só uma). Alterar a configuração mostra o que está gravado e pergunta a **memória máxima**, a **cota de CPU**, a **janela de horário** e a **validade** (Enter mantém; `-` remove janela ou validade); só o que mudou é reaplicado, **sem token e sem registrar de novo**. Remover confirma (padrão: não), confere que você é administrador e usa o repositório ou a organização gravados na configuração;
 4. o **painel do servidor** (veja abaixo), **logo depois de conectar e antes de perguntar o repositório**: sistema, Docker, instâncias e recursos. Se o veredito for "não cabe", para aí, sem perguntar mais nada nem gerar token. Se o motivo for **memória**, ele explica as saídas e oferece **ajustar a reserva e o mínimo de memória e reavaliar o painel** (veja "Quando não cabe por memória");
 5. repositório (`<dono>/<repo>`) ou organização, conferindo que você é **administrador**. Se o repositório for **público**, ele avisa do risco (qualquer pessoa pode abrir um pull request de um fork, e os workflows rodariam no seu servidor; o GitHub recomenda runner self-hosted só com repositórios privados) e pergunta *"Continuar mesmo assim?"* (padrão: não). Se não conseguir consultar a visibilidade, avisa e segue; para organizações não consulta;
 6. nome da instância (sugerido a partir do alvo), avisando se **já existe** na VPS;
-7. opções avançadas, só se você quiser: memória máxima, cota de CPU, rótulos e Docker rootless;
+7. opções avançadas, só se você quiser: memória máxima, cota de CPU, rótulos, **janela de horário**, **validade** e Docker rootless;
 8. o **painel desta instância**, que completa o do servidor com a situação da instância, os avisos que dependem do repositório e o veredito final já com as suas opções (mostra só a parte nova, sem repetir o servidor). O ajuste de memória também é oferecido aqui, se for ele o problema;
 9. um resumo e a confirmação (padrão: não). Só então instala, mostra o `--status` e imprime o **comando equivalente sem o assistente**, para repetir noutra VPS.
 
@@ -128,6 +128,9 @@ Valem em `--var CHAVE=valor` do `registrar.sh` ou no ambiente do `instalar.sh`. 
 | `EXTRAS_SH` | (vazio) | Script executado como root no fim: caminho absoluto na VPS, ou URL `https://` com `EXTRAS_SHA256`. Deve ser idempotente. |
 | `EXTRAS_SHA256` | (vazio) | sha256 do `EXTRAS_SH` por URL. |
 | `ENV_EXTRAS` | (vazio) | `CHAVE=valor` separados por `;`, repassados aos jobs pelo `.env` do runner. |
+| `JANELA` | (vazio = sempre ligado) | Horário em que o runner fica ligado, `HH:MM-HH:MM` (24 h, **horário da VPS**; pode atravessar a meia-noite, ex.: `22:00-06:00`; o fim é exclusivo). Fora dele o runner é desligado, **esperando o job em andamento terminar**. Veja "Janela de horário e validade". |
+| `VALIDADE` | (vazio = sem validade) | Data `AAAA-MM-DD`. No fim desse dia (23:59, horário da VPS) o runner se desliga e se desabilita sozinho. Veja "Janela de horário e validade". |
+| `JANELA_ESPERA_MIN` | `120` | Quanto esperar (minutos) um job terminar antes de desligar o runner na hora do fim da janela ou da validade; passado isso, o runner é desligado mesmo assim e o job é cancelado. |
 
 ## No repositório que vai usar o runner
 
@@ -148,6 +151,18 @@ Passos que só existem no runner do GitHub (`sudo`, caminhos como `/usr/bin/goog
 ```
 
 e o equivalente na VPS vem de `HOSTS_EXTRAS`, `PACOTES_EXTRAS`, `EXTRAS_SH` ou `ENV_EXTRAS` (ou de um passo com `if: runner.environment == 'self-hosted'`). `actions/checkout`, `setup-*`, `cache`, `upload-artifact` e `services:` funcionam sem mudança (`services:` exige `DOCKER_ROOTLESS=1`). Detalhes em [docs/design.md](docs/design.md#45-o-que-muda-no-repositório-que-usa-o-runner).
+
+## Janela de horário e validade
+
+```bash
+./registrar.sh … --var JANELA=22:00-06:00 --var VALIDADE=2026-12-31
+```
+
+- **Janela:** o runner só fica ligado no horário dado (o da VPS: confira com `date` lá). Dois disparos de um timer do systemd (do sistema, não do usuário do runner) ligam e desligam o serviço, e um terceiro, 1 minuto depois da inicialização, acerta o estado se a VPS reiniciar. Com janela, o serviço do runner **não sobe sozinho na inicialização**: quem o liga é o timer. Fora da janela, os jobs ficam na fila do GitHub (que os cancela depois de 24 h) até a janela abrir. Para desligar, o script espera o job em andamento terminar (até `JANELA_ESPERA_MIN`, padrão 120 minutos) e só então para o serviço.
+- **Validade:** no fim do dia dado o runner é parado e **desabilitado** e uma marca em `/etc/runner-vps/<nome>.expirada` registra a expiração. O registro no GitHub **continua lá** (o runner só fica offline): para tirá-lo, use `--remover`. Reaplicar com a mesma `VALIDADE` vencida é recusado; para reativar, informe outra `VALIDADE` (ou `VALIDADE=` para ficar sem). Uma `VALIDADE` já passada é recusada na instalação.
+- O script que os timers chamam fica em `/etc/runner-vps/ciclo-<nome>.sh`, **de root**, e não dentro do HOME do runner (que o próprio usuário pode editar). `--status` mostra a janela, a validade e se a instância já expirou; `--config` mostra o que está gravado.
+- Para remover as duas: `--var JANELA= --var VALIDADE=`. Timers, script e marca somem e o runner volta a ficar sempre ligado.
+- O assistente pergunta as duas nas opções avançadas e, no menu de configuração, mostra os valores atuais (`-` remove).
 
 ## Operação
 

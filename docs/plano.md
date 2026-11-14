@@ -237,6 +237,16 @@ Modificar: `README.md` (Task 5).
 - [x] README e design.
 - [x] Commit: `feat: menu do assistente (estado, configuração, remoção) e --listar/--config`.
 
+## Task 14: janela de horário e validade
+
+**Files:** modificar `instalar.sh`, `registrar.sh`, `testes/test_assistente.sh`, criar `testes/test_ciclo.sh`, `README.md`, `docs/design.md`.
+**Regras:** design 4.4b. O script de ciclo fica fora do HOME do runner; nunca token no script.
+- [x] Testes primeiro (`test_ciclo.sh`, VPS falsa com `pgrep`, `sleep` e relógio falsos): sem JANELA/VALIDADE nada de ciclo; janela (script 755 em `/etc/runner-vps`, timers, serviço, usuário não habilitado, `enable --now` do timer, início/parada conforme a hora, todas as bordas, com virada da meia-noite); esperar o job (passos de 30 s, limite `JANELA_ESPERA_MIN`, sem consulta dentro da janela); validade (timer, `expirar`, marca, `ajustar` depois de expirada e com validade vencida); configuração inválida (janela e validade, validade passada, de hoje vale, `JANELA_ESPERA_MIN`); sem registro ainda; idempotência (nada muda, sem `daemon-reload`), mudar a janela, remover as duas, reativar, recusar a mesma validade vencida; `--status` e `--config`; `--remover` limpa tudo; duas instâncias separadas.
+- [x] Testes do assistente: janela e validade nas opções avançadas (inválidos repetem; datas impossíveis ou passadas recusadas) e no menu de configuração (padrão = valor atual, `-` remove, só o que mudou vai, resumo de-para, comando equivalente).
+- [x] Implementar (`JANELA`, `VALIDADE`, `JANELA_ESPERA_MIN` nas chaves; `conteudo_ciclo`, timers, `configurar_ciclo`, `limpar_ciclo`, `verificar_validade`; `ativar_servicos` sem `enable` com janela; estado; remoção; no `registrar.sh`, `pedir_janela` e `pedir_validade`).
+- [x] README e design.
+- [x] Commit: `feat: janela de horário e validade do runner (timers do systemd), no instalador e no assistente`.
+
 ## Fecho
 
 - [x] `shellcheck` limpo e `testes/rodar.sh` verde, local e no CI do projeto.
