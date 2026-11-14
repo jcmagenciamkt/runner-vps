@@ -30,6 +30,7 @@ printf '%s %s\n' "\$(basename "\$0")" "\$*" > "\$t/c.\$n.args"
 cat > "\$t/c.\$n.stdin"
 case "\$*" in
   *"-s -- --so-checar"*)
+    if [ "\${CABE:-sim}" = erro ]; then echo 'ERRO: rode como root.'; exit 1; fi
     if [ "\${CABE:-sim}" = nao ]; then echo 'VEREDITO: não cabe: memória (mínimo 2048)'; exit 1; fi
     echo "VEREDITO: cabe (MemoryMax=\${MEMMAX:-4096}M CPUQuota=200%)"; exit 0 ;;
 esac
@@ -134,6 +135,11 @@ limpar
 codigo="$(CABE=nao rodar --vps root@v --repos dono/a,dono/b --quieto)"
 afirmar "servidor que não cabe: saída 1, mostra o veredito, sem token e sem instalar" \
   "$([ "$codigo" = 1 ] && grep -q 'VEREDITO: não cabe' "$tmp/out" "$tmp/err" && [ "$(ncalls)" = 1 ] && [ ! -e "$tmp/gh.log" ] && echo 0 || echo 1)"
+
+limpar
+codigo="$(CABE=erro rodar --vps root@v --repos dono/a,dono/b --quieto)"
+afirmar "painel que falha (não é 'não cabe'): saída 1, diz que o painel falhou, sem token e sem instalar" \
+  "$([ "$codigo" = 1 ] && grep -q 'O painel falhou antes de dar o veredito' "$tmp/err" && ! grep -q 'não cabe' "$tmp/err" && [ "$(ncalls)" = 1 ] && [ ! -e "$tmp/gh.log" ] && echo 0 || echo 1)"
 
 limpar
 codigo="$(FALHA_NOME=b rodar --vps root@v --repos dono/a,dono/b,dono/c --var MEM_MIN_MB=1024 --quieto)"

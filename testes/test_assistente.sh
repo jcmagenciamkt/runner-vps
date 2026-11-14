@@ -56,12 +56,14 @@ case "$tudo" in
         v="$(cat "$ctl/cabe" 2> /dev/null || echo 0)"
         if [ "$v" = 0 ] && [ -f "$ctl/cabe_instancia" ] && grep -q 'RUNNER_NOME' "$arq"; then v="$(cat "$ctl/cabe_instancia")"; fi
         if [ "$v" = 1 ] && grep -q 'MEM_MIN_MB' "$arq"; then v=0; fi
+        if [ "$v" = 4 ]; then echo 'ERRO: rode como root.'; exit 1; fi
         printf '== Sistema ==\nsistema: falso\n'
         if grep -q 'RUNNER_NOME' "$arq"; then printf '\n== Esta instância ==\nsituação: falsa\n'; fi
         printf '\n== Recursos e veredito ==\n'
         case "$v" in
           0) echo 'VEREDITO: cabe (MemoryMax=4096M CPUQuota=200%)'; exit 0 ;;
           2) echo 'VEREDITO: não cabe: disco (mínimo 10 GB)'; exit 1 ;;
+          4) echo 'ERRO: rode como root.'; exit 1 ;;
           *) echo 'VEREDITO: não cabe: memória (mínimo 2048)'; exit 1 ;;
         esac ;;
       --status) echo 'ESTADO FALSO'; exit 0 ;;
@@ -739,5 +741,18 @@ echo repo > "$TMP/ctl/existentes"
 codigo="$(UID_ATUAL=1000 SUDO_CMD="$TMP/bin/sudo-falso" assistente dono/repo '' s n s -- --local)"
 afirmar "--local sem ser root: o sudo só envolve o instalador e a checagem; o token não vai para o sudo" \
   "$([ "$codigo" = 0 ] && houve '^sudo .*shell-local -s --' && houve '^sudo .*shell-local -c test -e' && ! grep -q "$TMP/bin/sudo-falso.*$TOKEN_FALSO" "$TMP/chamadas.log" && ! grep -q "^sudo .*$TOKEN_FALSO" "$TMP/chamadas.log" && echo 0 || echo 1)"
+
+# 15. painel que falha (não é "não cabe"): mensagem própria, sem confundir com o veredito
+novo_cenario
+echo 4 > "$TMP/ctl/cabe"
+codigo="$(assistente "${CONEXAO[@]}")"
+afirmar "painel que falha por permissão: saída 1, sem token e sem instalar" "$([ "$codigo" = 1 ] && ! instalou && ! gerou_token && echo 0 || echo 1)"
+afirmar "diz que o painel falhou, mostra o erro e manda conectar como root" \
+  "$(saida_tem 'O painel falhou antes de dar o veredito' && saida_tem 'ERRO: rode como root.' && saida_tem 'Conecte com o usuário root'; echo $?)"
+afirmar "não chama isso de \"não cabe\" nem oferece ajustar memória" "$(! saida_tem 'não cabe' && ! saida_tem 'Ajustar a reserva'; echo $?)"
+novo_cenario
+echo 2 > "$TMP/ctl/cabe"
+codigo="$(assistente "${CONEXAO[@]}")"
+afirmar "'não cabe' de verdade continua sendo 'não cabe'" "$([ "$codigo" = 1 ] && saida_tem 'o veredito é "não cabe"' && ! saida_tem 'O painel falhou'; echo $?)"
 
 relatorio "assistente interativo"
