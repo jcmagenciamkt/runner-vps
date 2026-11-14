@@ -1,0 +1,2 @@
+# Os testes carregam harness e VPS falsa com `source`; deixa o shellcheck seguir os caminhos relativos.
+external-sources=true

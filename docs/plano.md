@@ -31,6 +31,7 @@
 
 ## Já existe (não refazer)
 
+- Task 1 pronta: `testes/harness.sh`, `testes/vps-falsa.sh`, `testes/rodar.sh`, `testes/test_harness.sh`, `.shellcheckrc` e `.github/workflows/ci.yml`. A VPS falsa exporta também `CONFIG_CMD` e `ARQUIVOS_DO_USUARIO_CMD`; `DF_CMD` imita `df -BG --output=avail <caminho>` (cabeçalho + `40G`); `CONFIG_SAIDA` define o código de saída do `config.sh` falso.
 - `registrar.sh` (lado de quem administra) e `testes/test_registrar.sh`: geram o token pelo `gh api`, montam as linhas `export` e as enviam com o `instalar.sh` pelo stdin do SSH (`bash -s -- [subcomando]`). O teste é autossuficiente; a Task 1 pode migrá-lo para o harness, mantendo todas as asserções. O `instalar.sh` precisa honrar esse contrato: variáveis vêm do ambiente, subcomando vem de `$1`, e o stdin não é lido.
 - `CLAUDE.md` e `AGENTS.md` (mesmo conteúdo): regras para agentes. Mantenha os dois iguais.
 
@@ -50,11 +51,11 @@ Modificar: `README.md` (Task 5).
 ## Task 1: harness de testes e CI do projeto
 
 **Files:** criar `testes/harness.sh`, `testes/vps-falsa.sh`, `testes/rodar.sh`, `.github/workflows/ci.yml`, `.shellcheckrc`.
-- [ ] `harness.sh` com as funções das interfaces; `rodar.sh` executa todo `testes/test_*.sh` e sai com 1 se algum falhar.
-- [ ] `vps-falsa.sh` com parâmetros `MEM_TOTAL_MB`, `MEM_LIVRE_MB`, `CPUS`, `DISCO_LIVRE_GB`.
-- [ ] Teste de fumaça do harness (dentro de `rodar.sh`): um comando falso registra a chamada e devolve o código pedido; o tarball falso confere o sha256.
-- [ ] `ci.yml`: em `ubuntu-latest` (este repositório é público; minutos ilimitados), `shellcheck -S warning *.sh testes/*.sh` e `testes/rodar.sh`. O `rodar.sh` precisa incluir o `testes/test_registrar.sh` que já existe.
-- [ ] Commit: `test: harness de testes com VPS falsa e CI com shellcheck`.
+- [x] `harness.sh` com as funções das interfaces; `rodar.sh` executa todo `testes/test_*.sh` e sai com 1 se algum falhar.
+- [x] `vps-falsa.sh` com parâmetros `MEM_TOTAL_MB`, `MEM_LIVRE_MB`, `CPUS`, `DISCO_LIVRE_GB`.
+- [x] Teste de fumaça do harness (dentro de `rodar.sh`): um comando falso registra a chamada e devolve o código pedido; o tarball falso confere o sha256.
+- [x] `ci.yml`: em `ubuntu-latest` (este repositório é público; minutos ilimitados), `shellcheck -S warning *.sh testes/*.sh` e `testes/rodar.sh`. O `rodar.sh` precisa incluir o `testes/test_registrar.sh` que já existe.
+- [x] Commit: `test: harness de testes com VPS falsa e CI com shellcheck`.
 
 ## Task 2: `instalar.sh` — argumentos, configuração e diagnóstico
 
