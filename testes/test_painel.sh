@@ -155,7 +155,7 @@ afirmar "mostra quanto sobraria e o mínimo" saida_tem 'memória insuficiente: s
 afirmar "mostra quanto seria necessário e quanto falta" saida_tem 'seriam necessários 3072 MB disponíveis (faltam 1233 MB)'
 afirmar "cita a reserva e as outras instâncias usadas na conta" saida_tem 'Com a reserva de 1024 MB e 0 MB de outras instâncias'
 afirmar "a linha de números vem antes do veredito" test "$(linha 'memória insuficiente')" -lt "$(linha 'VEREDITO:')"
-afirmar "o veredito continua sendo a última linha" test "$(ultima_linha | cut -c1-24)" = 'VEREDITO: não cabe: mem'
+afirmar "o veredito continua sendo a última linha" grep -q '^VEREDITO: não cabe: memória' <<< "$(ultima_linha)"
 RESERVA_MB=256 MEM_MIN_MB=1536 painel; codigo=$?
 afirmar "com reserva e mínimo menores, cabe (saída 0)" test "$codigo" -eq 0
 afirmar "e a linha de números não aparece" test "$(grep -c 'memória insuficiente' "$TMP/out")" -eq 0
