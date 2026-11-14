@@ -31,6 +31,7 @@
 
 ## Já existe (não refazer)
 
+- Task 2 pronta: `instalar.sh` (argumentos, `.conf`, diagnóstico, veredito) e `testes/test_diagnostico.sh`. O `.conf` também persiste `RUNNER_NOME_GITHUB` e `EXTRAS_SHA256` (sem eles a segunda execução perderia o nome no GitHub e o sha de `EXTRAS_SH` por URL). `--status` e `--remover` saem com 1 até a Task 3. `MEMORY_MAX_MB`/`CPU_QUOTA` calculados no primeiro instalar ficam gravados no `.conf` e passam a valer como fixados (estabilidade e idempotência); apague a linha para recalcular.
 - Task 1 pronta: `testes/harness.sh`, `testes/vps-falsa.sh`, `testes/rodar.sh`, `testes/test_harness.sh`, `.shellcheckrc` e `.github/workflows/ci.yml`. A VPS falsa exporta também `CONFIG_CMD` e `ARQUIVOS_DO_USUARIO_CMD`; `DF_CMD` imita `df -BG --output=avail <caminho>` (cabeçalho + `40G`); `CONFIG_SAIDA` define o código de saída do `config.sh` falso.
 - `registrar.sh` (lado de quem administra) e `testes/test_registrar.sh`: geram o token pelo `gh api`, montam as linhas `export` e as enviam com o `instalar.sh` pelo stdin do SSH (`bash -s -- [subcomando]`). O teste é autossuficiente; a Task 1 pode migrá-lo para o harness, mantendo todas as asserções. O `instalar.sh` precisa honrar esse contrato: variáveis vêm do ambiente, subcomando vem de `$1`, e o stdin não é lido.
 - `CLAUDE.md` e `AGENTS.md` (mesmo conteúdo): regras para agentes. Mantenha os dois iguais.
@@ -61,7 +62,7 @@ Modificar: `README.md` (Task 5).
 
 **Files:** criar `instalar.sh`; criar `testes/test_diagnostico.sh`.
 **Regras:** design 4.2 (configuração persistida) e 4.4 (diagnóstico e veredito).
-- [ ] Testes (escreva primeiro):
+- [x] Testes (escreva primeiro):
   1. sem `RUNNER_NOME`, ou com nome inválido (`Foo`, `a b`): saída 2 e mensagem; sem `SOU_ROOT` e `id -u` ≠ 0: saída 1 e nenhum arquivo;
   2. VPS 8192 MB total, 6144 livres, 4 CPUs, 40 GB, sem outras instâncias: `VEREDITO: cabe (MemoryMax=5120M CPUQuota=300%)`, saída 0;
   3. 2560 livres: 1536 → `não cabe: memória`, saída 1; 1 CPU: `CPUQuota=100%`; 6 GB de disco: `não cabe: disco`;
@@ -69,8 +70,8 @@ Modificar: `README.md` (Task 5).
   5. `MEMORY_MAX_MB=1024` fixado à mão: `não cabe: memória (mínimo 2048)`;
   6. `--so-checar` não cria nada em `RAIZ` e não chama nenhum comando falso com efeito;
   7. primeiro `instalar` sem `RUNNER_URL`: saída 2; com `.conf` existente e sem variáveis: usa o `.conf`; variável presente sobrescreve e o `.conf` é reescrito; o `.conf` tem `chmod 600` e **não** contém `RUNNER_TOKEN` nem a palavra `TOKEN`.
-- [ ] Implementar: análise de argumentos, leitura/gravação do `.conf`, diagnóstico, veredito. A instalação em si ainda não (o script para depois do veredito com uma mensagem "instalação: próxima task" que a Task 3 remove).
-- [ ] Commit: `feat: instalar.sh com configuração persistida, diagnóstico e veredito`.
+- [x] Implementar: análise de argumentos, leitura/gravação do `.conf`, diagnóstico, veredito. A instalação em si ainda não (o script para depois do veredito com uma mensagem "instalação: próxima task" que a Task 3 remove).
+- [x] Commit: `feat: instalar.sh com configuração persistida, diagnóstico e veredito`.
 
 ## Task 3: `instalar.sh` — instalação, idempotência, `--status`, `--remover`
 
