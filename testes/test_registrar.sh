@@ -38,7 +38,7 @@ echo "registrar.sh"
 # 1. instalar: token pela API, vai pelo stdin, não aparece em saída nem em argumentos
 limpar
 codigo="$(rodar --vps root@vps.exemplo:2222 --repo dono/repo --nome exemplo --rotulos a,b --chave "$tmp/chave")"
-afirmar "instalar sai com 0" "$([ "$codigo" = 0 ]; echo $?)"
+afirmar "instalar sai com 0" "$([ "$codigo" = 0 ] && echo 0 || echo 1)"
 afirmar "gh chamado com registration-token do repositório" "$(grep -q 'api -X POST repos/dono/repo/actions/runners/registration-token' "$tmp/gh.log"; echo $?)"
 afirmar "ssh recebe -i, -p 2222 e bash -s" "$(grep -q -- "-i $tmp/chave -p 2222 -o BatchMode=yes root@vps.exemplo bash -s -- " "$tmp/ssh.args"; echo $?)"
 afirmar "stdin do ssh tem RUNNER_TOKEN, RUNNER_URL, RUNNER_NOME, RUNNER_ROTULOS" \
@@ -59,8 +59,8 @@ afirmar "RUNNER_URL da organização" "$(grep -q 'export RUNNER_URL=https://gith
 for m in so-checar status; do
   limpar
   codigo="$(rodar --vps root@vps.exemplo --nome exemplo "--$m")"
-  afirmar "--$m sai com 0 sem --repo" "$([ "$codigo" = 0 ]; echo $?)"
-  afirmar "--$m não chama o gh" "$([ ! -e "$tmp/gh.log" ]; echo $?)"
+  afirmar "--$m sai com 0 sem --repo" "$([ "$codigo" = 0 ] && echo 0 || echo 1)"
+  afirmar "--$m não chama o gh" "$([ ! -e "$tmp/gh.log" ] && echo 0 || echo 1)"
   afirmar "--$m não envia RUNNER_TOKEN" "$(! grep -q RUNNER_TOKEN "$tmp/ssh.stdin"; echo $?)"
   afirmar "--$m repassa o argumento ao instalar.sh" "$(grep -q -- "bash -s -- --$m" "$tmp/ssh.args"; echo $?)"
 done
@@ -74,7 +74,7 @@ afirmar "--remover repassa --remover" "$(grep -q -- 'bash -s -- --remover' "$tmp
 # 5. --sem-token: sem gh, instala sem RUNNER_TOKEN
 limpar
 rodar --vps root@vps.exemplo --nome exemplo --sem-token > /dev/null
-afirmar "--sem-token não chama o gh e não envia token" "$([ ! -e "$tmp/gh.log" ] && ! grep -q RUNNER_TOKEN "$tmp/ssh.stdin"; echo $?)"
+afirmar "--sem-token não chama o gh e não envia token" "$([ ! -e "$tmp/gh.log" ] && ! grep -q RUNNER_TOKEN "$tmp/ssh.stdin" && echo 0 || echo 1)"
 
 # 6. --var e --sem-docker entram como export, com valor escapado
 limpar
@@ -86,30 +86,30 @@ afirmar "--var simples" "$(grep -q 'export RESERVA_MB=2048' "$tmp/ssh.stdin"; ec
 # 7. --mostrar: não conecta, não chama gh, token redigido
 limpar
 codigo="$(rodar --vps root@vps.exemplo --repo dono/repo --nome exemplo --mostrar)"
-afirmar "--mostrar sai com 0" "$([ "$codigo" = 0 ]; echo $?)"
-afirmar "--mostrar não chama ssh nem gh" "$([ ! -e "$tmp/ssh.args" ] && [ ! -e "$tmp/gh.log" ]; echo $?)"
+afirmar "--mostrar sai com 0" "$([ "$codigo" = 0 ] && echo 0 || echo 1)"
+afirmar "--mostrar não chama ssh nem gh" "$([ ! -e "$tmp/ssh.args" ] && [ ! -e "$tmp/gh.log" ] && echo 0 || echo 1)"
 afirmar "--mostrar redige o token" "$(grep -q 'RUNNER_TOKEN=<redigido>' "$tmp/out"; echo $?)"
 
 # 8. erros de uso: saída 2 e nada enviado
 limpar
-afirmar "sem --vps: saída 2" "$([ "$(rodar --nome exemplo --repo dono/repo)" = 2 ]; echo $?)"
-afirmar "nome inválido: saída 2" "$([ "$(rodar --vps root@v --repo dono/repo --nome 'Ex emplo')" = 2 ]; echo $?)"
-afirmar "instalar sem --repo/--org: saída 2" "$([ "$(rodar --vps root@v --nome exemplo)" = 2 ]; echo $?)"
-afirmar "--repo e --org juntos: saída 2" "$([ "$(rodar --vps root@v --repo a/b --org c --nome exemplo)" = 2 ]; echo $?)"
-afirmar "--var RUNNER_TOKEN=…: saída 2" "$([ "$(rodar --vps root@v --repo a/b --nome exemplo --var RUNNER_TOKEN=x)" = 2 ]; echo $?)"
-afirmar "porta inválida: saída 2" "$([ "$(rodar --vps root@v:abc --repo a/b --nome exemplo)" = 2 ]; echo $?)"
-afirmar "nenhum erro de uso chamou o ssh" "$([ ! -e "$tmp/ssh.args" ]; echo $?)"
+afirmar "sem --vps: saída 2" "$([ "$(rodar --nome exemplo --repo dono/repo)" = 2 ] && echo 0 || echo 1)"
+afirmar "nome inválido: saída 2" "$([ "$(rodar --vps root@v --repo dono/repo --nome 'Ex emplo')" = 2 ] && echo 0 || echo 1)"
+afirmar "instalar sem --repo/--org: saída 2" "$([ "$(rodar --vps root@v --nome exemplo)" = 2 ] && echo 0 || echo 1)"
+afirmar "--repo e --org juntos: saída 2" "$([ "$(rodar --vps root@v --repo a/b --org c --nome exemplo)" = 2 ] && echo 0 || echo 1)"
+afirmar "--var RUNNER_TOKEN=…: saída 2" "$([ "$(rodar --vps root@v --repo a/b --nome exemplo --var RUNNER_TOKEN=x)" = 2 ] && echo 0 || echo 1)"
+afirmar "porta inválida: saída 2" "$([ "$(rodar --vps root@v:abc --repo a/b --nome exemplo)" = 2 ] && echo 0 || echo 1)"
+afirmar "nenhum erro de uso chamou o ssh" "$([ ! -e "$tmp/ssh.args" ] && echo 0 || echo 1)"
 
 # 9. gh falhando: saída 1, mensagem sem token, ssh não chamado
 limpar
 printf '#!/usr/bin/env bash\nexit 1\n' > "$tmp/bin/gh"
 codigo="$(rodar --vps root@vps.exemplo --repo dono/repo --nome exemplo)"
-afirmar "gh falhando: saída 1 e ssh não chamado" "$([ "$codigo" = 1 ] && [ ! -e "$tmp/ssh.args" ]; echo $?)"
+afirmar "gh falhando: saída 1 e ssh não chamado" "$([ "$codigo" = 1 ] && [ ! -e "$tmp/ssh.args" ] && echo 0 || echo 1)"
 
 # 10. instalar.sh ausente: saída 1
 limpar
 codigo="$(INSTALAR_SH=/caminho/inexistente bash "$script" --vps root@v --nome exemplo --status >/dev/null 2>&1; echo $?)"
-afirmar "instalar.sh ausente: saída 1" "$([ "$codigo" = 1 ]; echo $?)"
+afirmar "instalar.sh ausente: saída 1" "$([ "$codigo" = 1 ] && echo 0 || echo 1)"
 
 # 11. o texto do script não ecoa o token
 afirmar "registrar.sh não contém 'echo \"\$token' nem set -x" "$(! grep -qE 'echo .*\$token|set -x' "$script"; echo $?)"
