@@ -905,7 +905,7 @@ verificar_instancia() {
         docker) v_falha "privilégios: o usuário está no grupo docker (daria acesso de root pelo socket)"; erradas=1 ;;
       esac
     done
-    sudoers="$(grep -rlE "^[[:space:]]*$USUARIO[[:space:]]" "$RAIZ/etc/sudoers" "$RAIZ/etc/sudoers.d" 2> /dev/null | head -n 1 || true)"
+    sudoers="$(grep -rlE "^[[:space:]]*${USUARIO}[[:space:]]" "$RAIZ/etc/sudoers" "$RAIZ/etc/sudoers.d" 2> /dev/null | head -n 1 || true)"
     if [ -n "$sudoers" ]; then v_falha "privilégios: o sudoers dá sudo ao usuário (${sudoers#"$RAIZ"})"; erradas=1; fi
     if [ "$erradas" -eq 0 ]; then v_ok "privilégios: sem sudo e sem o grupo docker"; fi
   fi

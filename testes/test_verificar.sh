@@ -14,6 +14,7 @@ saida_tem() { grep -qF -- "$1" "$TMP/out"; }
 # todos <condição…>: cada argumento é um comando (avaliado com eval); ok só se todos saírem com 0.
 todos() { local c; for c in "$@"; do eval "$c" || return 1; done; }
 verificar() { RUNNER_NOME=exemplo bash "$script" --verificar > "$TMP/out" 2> "$TMP/err"; }
+sem_mutacao() { ! mutou; }
 mutou() { grep -qE 'systemctl .*(start|stop|restart|enable|disable|daemon-reload)|useradd|userdel|chown|loginctl' "$TMP/chamadas.log"; }
 unidade="$TMP/raiz/opt/runner-vps/exemplo/.config/systemd/user/runner-vps.service"
 
@@ -72,7 +73,8 @@ afirmar "resumo final: VERIFICAÇÃO: ok" saida_tem 'VERIFICAÇÃO: ok'
 afirmar "diz o ExecStart conferido" saida_tem "ok: unidade: ExecStart=/opt/runner-vps/exemplo/runner/run.sh"
 afirmar "diz que o Runner.Listener roda como o usuário da instância" saida_tem 'ok: processo: Runner.Listener roda como runner-exemplo'
 afirmar "diz que não há sudo nem grupo docker" saida_tem 'ok: privilégios: sem sudo e sem o grupo docker'
-afirmar "somente leitura: nada mudou, nenhum comando com efeito" todos 'test "$antes" = "$(snapshot "$TMP/raiz")"' '! mutou'
+afirmar "somente leitura: nenhum arquivo mudou" test "$antes" = "$(snapshot "$TMP/raiz")"
+afirmar "somente leitura: nenhum comando com efeito" sem_mutacao
 afirmar "sem token na saída" bash -c '! grep -q "$2" "$1" "$3"' _ "$TMP/out" "$TOKEN_FALSO" "$TMP/err"
 
 echo "instalar.sh --verificar: o que dá errado"
