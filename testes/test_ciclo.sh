@@ -43,13 +43,14 @@ chamou_algo() { grep -qE -- "$1" "$TMP/chamadas.log"; }
 U='systemctl --user -M runner-exemplo@'   # prefixo das chamadas ao serviço do usuário
 CIC='etc/runner-vps/ciclo-exemplo.sh'
 UNID='etc/systemd/system'
+n_unidades() { find "$RAIZ/$UNID" -maxdepth 1 -name 'runner-vps-exemplo-*' 2> /dev/null | wc -l; }
 
 echo "janela e validade: sem nada configurado"
 nova_vps
 instalar; codigo=$?
 afirmar "instala (saída 0)" test "$codigo" -eq 0
 afirmar "sem JANELA nem VALIDADE: nenhum script nem unidade de ciclo" \
-  test ! -e "$RAIZ/$CIC" -a "$(ls "$RAIZ/$UNID" | grep -c 'runner-vps-exemplo')" -eq 0
+  test ! -e "$RAIZ/$CIC" -a "$(n_unidades)" -eq 0
 afirmar "o serviço do runner é habilitado e iniciado como sempre" chamou "$U enable --now runner-vps"
 afirmar "nenhum timer foi tocado" test "$(grep -c 'timer' "$TMP/chamadas.log")" -eq 0
 
@@ -193,7 +194,7 @@ afirmar "mudar a janela atualiza o script" grep -q '20:00' "$RAIZ/$CIC"
 echo "janela e validade: remover as duas configurações"
 CICLO_AGORA=23:00 reaplicar JANELA= VALIDADE=
 afirmar "sem JANELA nem VALIDADE: unidades, script e marca somem" \
-  test -z "$(ls "$RAIZ/$UNID" | grep 'runner-vps-exemplo')" -a ! -e "$RAIZ/$CIC" -a ! -e "$RAIZ/etc/runner-vps/exemplo.expirada"
+  test "$(n_unidades)" -eq 0 -a ! -e "$RAIZ/$CIC" -a ! -e "$RAIZ/etc/runner-vps/exemplo.expirada"
 afirmar "os timers foram desabilitados" "$(chamou 'systemctl disable --now runner-vps-exemplo-janela.timer' && chamou 'systemctl disable --now runner-vps-exemplo-validade.timer'; echo $?)"
 afirmar "o serviço do runner volta a ser habilitado e iniciado" chamou "$U enable --now runner-vps"
 afirmar "a configuração gravada fica sem janela nem validade" "$(grep -qE "^JANELA=(''|)\$" "$RAIZ/etc/runner-vps/exemplo.conf" && grep -qE "^VALIDADE=(''|)\$" "$RAIZ/etc/runner-vps/exemplo.conf"; echo $?)"
@@ -230,7 +231,7 @@ instalar JANELA=22:00-06:00 VALIDADE=2026-12-31
 env RUNNER_NOME=exemplo RUNNER_TOKEN="$TOKEN_FALSO" bash "$script" --remover > "$TMP/out" 2> "$TMP/err"; codigo=$?
 afirmar "remover: saída 0" test "$codigo" -eq 0
 afirmar "remover: nenhuma unidade, script nem marca de ciclo sobra" \
-  test -z "$(ls "$RAIZ/$UNID" | grep 'runner-vps-exemplo')" -a ! -e "$RAIZ/$CIC"
+  test "$(n_unidades)" -eq 0 -a ! -e "$RAIZ/$CIC"
 afirmar "remover: desabilita os timers antes de apagar" "$(chamou 'systemctl disable --now runner-vps-exemplo-janela.timer' && chamou 'systemctl disable --now runner-vps-exemplo-validade.timer'; echo $?)"
 afirmar_sem "$TMP/out" "$TOKEN_FALSO"
 
