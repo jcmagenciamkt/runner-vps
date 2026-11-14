@@ -27,7 +27,7 @@ O CI do projeto (`.github/workflows/ci.yml`) roda os dois. Rode antes de abrir o
 - `instalar.sh` — roda **na VPS, como root**, enviado por `ssh … 'bash -s'`. Subcomandos `--so-checar`, `--status`, `--remover`.
 - `registrar.sh` — roda **na máquina de quem administra**. Gera o token pela API (`gh api`), monta as variáveis e envia o `instalar.sh` pelo SSH. O token vai pelo fluxo de entrada do SSH, nunca pela linha de comando.
 - `gancho-fim.sh` — roda na VPS, como o usuário do runner, ao fim de cada job.
-- `systemd/` — modelos de unidade e de limites. `testes/` — harness e testes. `docs/` — spec e plano.
+- Os modelos da unidade systemd e dos limites ficam **dentro** do `instalar.sh` (ele viaja sozinho pelo stdin do SSH). `testes/` — harness e testes. `docs/` — spec e plano.
 
 ## Quando travar
 Spec ambígua ou task contraditória: faça a escolha mais simples que respeite a spec e explique no relato do PR. Se estiver bloqueado de verdade, pare e pergunte, com as opções e a sua recomendação.

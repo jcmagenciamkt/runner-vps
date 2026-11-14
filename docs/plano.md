@@ -4,7 +4,7 @@
 
 **Goal:** `instalar.sh` instala, numa VPS Linux, um runner self-hosted do GitHub Actions para qualquer repositório ou organização, em usuário sem privilégio com Docker rootless opcional e limites de recursos, de forma idempotente e testada.
 
-**Architecture:** um script `instalar.sh` (root, `bash -s` por SSH) com subcomandos `--so-checar`, `--status`, `--remover`; um `gancho-fim.sh` por instância; modelos de unidade e de limites em `systemd/`; testes em bash em `testes/` que rodam o instalador contra uma "VPS" em diretório temporário, com todos os comandos com efeito substituídos por variáveis de ambiente; CI do projeto com shellcheck e os testes.
+**Architecture:** um script `instalar.sh` (root, `bash -s` por SSH) com subcomandos `--so-checar`, `--status`, `--remover`; um `gancho-fim.sh` por instância; modelos de unidade e de limites embutidos no `instalar.sh` (ele viaja sozinho pelo stdin do SSH, então não pode ler arquivos ao lado); testes em bash em `testes/` que rodam o instalador contra uma "VPS" em diretório temporário, com todos os comandos com efeito substituídos por variáveis de ambiente; CI do projeto com shellcheck e os testes.
 
 **Tech Stack:** bash, systemd (unidades de usuário, fatias), Docker rootless, GitHub Actions runner, shellcheck. Sem Python, sem bats.
 
@@ -31,6 +31,15 @@
 
 ## Já existe (não refazer)
 
+- Task 3 pronta (`instalar.sh` completo, `testes/test_instalar.sh`, `testes/test_remover_status.sh`). Decisões e desvios do texto do plano:
+  - **Token pelo ambiente:** o `config.sh` recebe o token em `ACTIONS_RUNNER_INPUT_TOKEN` (o runner lê essa variável e a apaga), nunca em `--token` na linha de comando. Nos testes o `config.sh` falso grava o que viu em `$TMP/config-token-visto`, fora de `RAIZ`.
+  - **Lista de substituições estendida:** além da lista fechada, `COMO_USUARIO_CMD <usuario> <comando…>` (padrão `runuser -u`), `CHOWN_CMD`, `ID_CMD` (padrão `id`) e `ARQUIVOS_DO_USUARIO_CMD`. `BAIXAR_ARQUIVO` (só nos testes) escolhe o arquivo que o `BAIXAR_CMD` falso copia.
+  - **Templates embutidos** no `instalar.sh` (não existe `systemd/`), porque o script viaja sozinho pelo stdin. O `gancho-fim.sh` também será embutido: por ora o `instalar.sh` grava um gancho vazio (`exit 0`) e a Task 4 troca o conteúdo e acrescenta um teste que compara o embutido com o arquivo.
+  - **`EXTRAS_SH` roda depois de ligar o serviço** (último passo), como diz o teste do plano, e não antes do `daemon-reload`.
+  - **Serviço sem registro:** se o `.runner` não existe (sem `RUNNER_TOKEN`), o serviço é só habilitado (`enable`), não iniciado, para não ficar em laço de erro.
+  - **Runner pinado:** v2.338.2, sha256 de x64 e arm64 calculados baixando o asset oficial da release (confira contra as notas da release se quiser). `RUNNER_VERSAO` exige `RUNNER_SHA256`. Depois de extrair, roda o `bin/installdependencies.sh` do próprio runner.
+  - **Pendente:** o instalador **não configura o repositório apt do Docker**. Se o `dockerd-rootless-setuptool.sh` não existir depois do `apt install`, ele para e manda configurar o repositório oficial. Fica para uma task própria (exige fixar a chave GPG por sha256).
+  - Usuário comum (não `--system`), com grupo próprio; `useradd` sem `-G`.
 - Task 2 pronta: `instalar.sh` (argumentos, `.conf`, diagnóstico, veredito) e `testes/test_diagnostico.sh`. O `.conf` também persiste `RUNNER_NOME_GITHUB` e `EXTRAS_SHA256` (sem eles a segunda execução perderia o nome no GitHub e o sha de `EXTRAS_SH` por URL). `--status` e `--remover` saem com 1 até a Task 3. `MEMORY_MAX_MB`/`CPU_QUOTA` calculados no primeiro instalar ficam gravados no `.conf` e passam a valer como fixados (estabilidade e idempotência); apague a linha para recalcular.
 - Task 1 pronta: `testes/harness.sh`, `testes/vps-falsa.sh`, `testes/rodar.sh`, `testes/test_harness.sh`, `.shellcheckrc` e `.github/workflows/ci.yml`. A VPS falsa exporta também `CONFIG_CMD` e `ARQUIVOS_DO_USUARIO_CMD`; `DF_CMD` imita `df -BG --output=avail <caminho>` (cabeçalho + `40G`); `CONFIG_SAIDA` define o código de saída do `config.sh` falso.
 - `registrar.sh` (lado de quem administra) e `testes/test_registrar.sh`: geram o token pelo `gh api`, montam as linhas `export` e as enviam com o `instalar.sh` pelo stdin do SSH (`bash -s -- [subcomando]`). O teste é autossuficiente; a Task 1 pode migrá-lo para o harness, mantendo todas as asserções. O `instalar.sh` precisa honrar esse contrato: variáveis vêm do ambiente, subcomando vem de `$1`, e o stdin não é lido.
@@ -38,7 +47,7 @@
 
 ## File Structure
 
-Criar: `instalar.sh`, `gancho-fim.sh`, `systemd/runner-vps.service`, `systemd/runner-vps.slice.conf`, `testes/harness.sh`, `testes/vps-falsa.sh`, `testes/test_diagnostico.sh`, `testes/test_instalar.sh`, `testes/test_remover_status.sh`, `testes/test_gancho.sh`, `testes/rodar.sh`, `.github/workflows/ci.yml`, `.shellcheckrc`.
+Criar: `instalar.sh`, `gancho-fim.sh`, `testes/harness.sh`, `testes/vps-falsa.sh`, `testes/test_diagnostico.sh`, `testes/test_instalar.sh`, `testes/test_remover_status.sh`, `testes/test_gancho.sh`, `testes/rodar.sh`, `.github/workflows/ci.yml`, `.shellcheckrc`.
 Modificar: `README.md` (Task 5).
 
 ## Interfaces (como as partes se encontram)
@@ -75,9 +84,9 @@ Modificar: `README.md` (Task 5).
 
 ## Task 3: `instalar.sh` — instalação, idempotência, `--status`, `--remover`
 
-**Files:** modificar `instalar.sh`; criar `systemd/runner-vps.service` (modelo com `@HOME@` e `@AFTER_DOCKER@`), `systemd/runner-vps.slice.conf` (modelo com `@MEMORY_MAX@` e `@CPU_QUOTA@`); criar `testes/test_instalar.sh`, `testes/test_remover_status.sh`.
+**Files:** modificar `instalar.sh` (unidade e fatia saem de funções com heredoc, não de arquivos em `systemd/`); criar `testes/test_instalar.sh`, `testes/test_remover_status.sh`.
 **Regras:** design 4.2, 4.3, 4.6. Ordem: diagnóstico → usuário, `subuid`/`subgid` → pacotes → linger → rootless (se ligado; `ROOTLESS_CMD check` antes de `install`) → `PACOTES_EXTRAS` → baixar runner, sha256, extrair → registrar se `RUNNER_TOKEN` → `.env`, gancho, unidade, limites, `/etc/hosts`, `EXTRAS_SH` → `daemon-reload`, `enable --now` → veredito e estado.
-- [ ] Testes de instalação:
+- [x] Testes de instalação:
   1. em "cabe", cria todos os arquivos das interfaces; `.conf` com os valores; `.slice.d` com `MemoryMax=5120M` e `CPUQuota=300%`; `.env` com `DOCKER_HOST=unix:///run/user/<uid>/docker.sock` e com as linhas de `ENV_EXTRAS`; unidade com `After=docker.service`;
   2. `DOCKER_ROOTLESS=0`: sem `ROOTLESS_CMD`, sem `DOCKER_HOST`, sem `After=docker.service`, sem linha em `subuid`;
   3. em "não cabe": nenhum arquivo, nenhum comando falso com efeito, mesmo com `RUNNER_TOKEN`;
@@ -87,10 +96,10 @@ Modificar: `README.md` (Task 5).
   7. sha256 errado: falha antes de extrair, `$HOME/runner` ausente; `ROOTLESS_CMD check` com 1: para antes do runner, com o motivo;
   8. `HOSTS_EXTRAS` acrescenta uma linha marcada `# runner-vps <nome>`; `PACOTES_EXTRAS` chega ao `APT_CMD`; `EXTRAS_SH` local é executado como último passo; `EXTRAS_SH` por URL sem `EXTRAS_SHA256`: recusa;
   9. duas instâncias: usuários, HOMEs, `.conf`, `.slice.d` e faixas de `subuid` distintos e sem colisão.
-- [ ] Testes de `--status` e `--remover`:
+- [x] Testes de `--status` e `--remover`:
   1. `--status` imprime usuário, estado dos serviços (via `SYSTEMCTL_CMD` falso), limites e última linha do log; não altera nada;
   2. `--remover` sem token: recusa; com token: `CONFIG_CMD remove`, `SYSTEMCTL_CMD` com `disable --now`, `ROOTLESS_CMD uninstall`, apaga `$HOME`, `.conf`, `.slice.d` e a linha de `/etc/hosts`; `USERDEL_CMD` chamado só se não houver arquivo do usuário fora do HOME (simular com um arquivo em `RAIZ/var/tmp/x` pertencente ao usuário — no teste, uma lista `ARQUIVOS_DO_USUARIO_CMD` falsa); linhas de `subuid` ficam; outra instância na mesma VPS não é tocada.
-- [ ] Commit: `feat: instalar.sh instala usuário, Docker rootless, runner, limites e serviço; --status e --remover`.
+- [x] Commit: `feat: instalar.sh instala usuário, Docker rootless, runner, limites e serviço; --status e --remover`.
 
 ## Task 4: `gancho-fim.sh`
 
