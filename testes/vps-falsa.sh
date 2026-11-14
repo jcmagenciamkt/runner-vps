@@ -138,5 +138,6 @@ gerar_chave_falsa() {
   gpg --homedir "$gh" --batch --quiet --passphrase '' --quick-generate-key 'Docker Falso <falso@exemplo.test>' ed25519 sign never 2> /dev/null
   gpg --homedir "$gh" --batch --armor --export > "$1" 2> /dev/null
   CHAVE_FPR="$(gpg --homedir "$gh" --batch --with-colons --list-keys 2> /dev/null | awk -F: '$1 == "fpr" { print $10; exit }')"
+  export CHAVE_FPR
   gpgconf --homedir "$gh" --kill all 2> /dev/null || true
 }
