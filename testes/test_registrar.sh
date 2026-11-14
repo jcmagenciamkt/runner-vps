@@ -164,6 +164,15 @@ afirmar "--verificar envia RUNNER_NOME, mas nunca token, e não chama o gh" \
   "$(grep -q 'export RUNNER_NOME=exemplo' "$tmp/ssh.stdin" && ! grep -q RUNNER_TOKEN "$tmp/ssh.stdin" && [ ! -e "$tmp/gh.log" ]; echo $?)"
 limpar
 afirmar "--verificar sem --nome: saída 2 e nada enviado" "$([ "$(rodar --vps root@v --verificar)" = 2 ] && [ ! -e "$tmp/ssh.args" ] && echo 0 || echo 1)"
+limpar
+codigo="$(rodar --vps root@vps.exemplo --monitorar --var MONITOR_HORA=02:30 --quieto)"
+afirmar "--monitorar sem --nome sai com 0 e repassa --monitorar" "$([ "$codigo" = 0 ] && grep -q -- 'bash -s -- --monitorar$' "$tmp/ssh.args"; echo $?)"
+afirmar "--monitorar leva MONITOR_HORA, mas nem nome, nem URL, nem token, e não chama o gh" \
+  "$(grep -q 'export MONITOR_HORA=02:30' "$tmp/ssh.stdin" && ! grep -qE 'RUNNER_(NOME|URL|TOKEN)' "$tmp/ssh.stdin" && [ ! -e "$tmp/gh.log" ]; echo $?)"
+limpar
+codigo="$(rodar --vps root@vps.exemplo --monitorar-remover --quieto)"
+afirmar "--monitorar-remover sem --nome repassa --monitorar-remover, sem token nem gh" "$([ "$codigo" = 0 ] && grep -q -- 'bash -s -- --monitorar-remover' "$tmp/ssh.args" && ! grep -q RUNNER_TOKEN "$tmp/ssh.stdin" && [ ! -e "$tmp/gh.log" ]; echo $?)"
+afirmar "--interativo recusa --monitorar" "$([ "$(rodar --interativo --monitorar --vps root@v)" = 2 ] && echo 0 || echo 1)"
 afirmar "--interativo recusa --verificar" "$([ "$(rodar --interativo --verificar --vps root@v --nome x)" = 2 ] && echo 0 || echo 1)"
 afirmar "--interativo recusa --listar e --config" \
   "$([ "$(rodar --interativo --listar --vps root@v)" = 2 ] && [ "$(rodar --interativo --config --vps root@v --nome x)" = 2 ] && echo 0 || echo 1)"
