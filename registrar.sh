@@ -9,6 +9,9 @@
 #   registrar.sh --vps root@<vps>[:porta] | <alias do ~/.ssh/config> (--repo <dono>/<repo> | --org <org>) --nome <nome> [opções]
 #   registrar.sh --vps … [--nome <nome>] --so-checar      só o diagnóstico (sem token); sem --nome, só o servidor
 #   registrar.sh --vps … --nome <nome> --status           estado da instância (sem token)
+#   registrar.sh --vps … --listar                         nomes das instâncias da VPS (sem token)
+#   registrar.sh --vps … --nome <nome> --config           configuração gravada da instância (sem token)
+#   registrar.sh --vps … --nome <nome> --sem-token --var CHAVE=valor   altera a configuração (sem token)
 #   registrar.sh --vps … (--repo|--org) --nome <nome> --remover   desfaz a instância (token de remoção)
 #   registrar.sh --vps … --nome <nome> --sem-token        reinstala/atualiza sem registrar de novo
 #   registrar.sh --interativo                             assistente: pergunta e valida; sem argumentos
@@ -61,6 +64,8 @@ while [ $# -gt 0 ]; do
     --sem-docker) sem_docker=1; shift ;;
     --var) extras+=("${2:-}"); shift 2 ;;
     --so-checar) modo="so-checar"; shift ;;
+    --listar) modo="listar"; shift ;;
+    --config) modo="config"; shift ;;
     --status) modo="status"; shift ;;
     --remover) modo="remover"; shift ;;
     --sem-token) modo="sem-token"; shift ;;
@@ -288,6 +293,129 @@ montar_base() {
   for v in "${extras[@]}"; do base+=(--var "$v"); done
 }
 
+# Valor de uma chave num texto CHAVE=valor (uma por linha); vazio se não houver.
+valor_de() { # <chave> <texto>
+  local linha
+  while IFS= read -r linha; do
+    if [ "${linha%%=*}" = "$1" ]; then printf '%s' "${linha#*=}"; return 0; fi
+  done <<< "$2"
+  return 0
+}
+
+# Define $nome a partir de uma lista de instâncias (uma por linha): com uma só, usa ela; com várias, pergunta o número.
+escolher_instancia() { # <lista>
+  local -a nomes=()
+  local i _esc
+  mapfile -t nomes <<< "$1"
+  if [ "${#nomes[@]}" -eq 1 ]; then nome="${nomes[0]}"; printf 'Instância: %s\n' "$nome"; return 0; fi
+  while :; do
+    printf '\nInstâncias nesta VPS:\n'
+    for i in "${!nomes[@]}"; do printf '  %d) %s\n' "$((i + 1))" "${nomes[$i]}"; done
+    pergunta _esc "Escolha o número"
+    if [[ "$_esc" =~ ^[0-9]+$ ]] && [ "$_esc" -ge 1 ] && [ "$_esc" -le "${#nomes[@]}" ]; then
+      nome="${nomes[$((_esc - 1))]}"; return 0
+    fi
+    aviso "responda um número de 1 a ${#nomes[@]}."
+  done
+}
+
+# Mostra a configuração gravada da instância $nome, pergunta o que mudar (só o que não precisa de token) e
+# reaplica com --sem-token. Usa as variáveis do assistente (base, self).
+configurar_instancia() {
+  local cfg linha mem_atual cpu_atual mem_nova cpu_nova v
+  local -a mudancas=() vars=() args=()
+  if ! cfg="$(bash "$self" "${base[@]}" --nome "$nome" --config --quieto < /dev/null 2>&1)"; then
+    printf '%s\n' "$cfg" >&2; erro "não consegui ler a configuração de $nome." 1
+  fi
+  printf '\nConfiguração gravada de %s:\n' "$nome"
+  while IFS= read -r linha; do printf '  %s\n' "$linha"; done <<< "$cfg"
+  printf '\nEnter mantém o valor atual.\n'
+  mem_atual="$(valor_de MEMORY_MAX_MB "$cfg")"; cpu_atual="$(valor_de CPU_QUOTA "$cfg")"
+  while :; do
+    pergunta mem_nova "Memória máxima do runner em MB" "$mem_atual"
+    if [ -z "$mem_nova" ] || { [[ "$mem_nova" =~ ^[0-9]+$ ]] && [ "$mem_nova" -gt 0 ]; }; then break; fi
+    aviso "use um número inteiro maior que zero (MB)."
+  done
+  while :; do
+    pergunta cpu_nova "Cota de CPU em % de um núcleo" "$cpu_atual"
+    if [ -z "$cpu_nova" ] || { [[ "$cpu_nova" =~ ^[0-9]+%?$ ]] && [ "${cpu_nova%\%}" -gt 0 ]; }; then break; fi
+    aviso "use um número inteiro maior que zero, ex.: 200."
+  done
+  cpu_nova="${cpu_nova%\%}"
+  if [ -n "$mem_nova" ] && [ "$mem_nova" != "$mem_atual" ]; then
+    vars+=("MEMORY_MAX_MB=$mem_nova"); mudancas+=("MEMORY_MAX_MB: ${mem_atual:-(calculado)} -> $mem_nova")
+  fi
+  if [ -n "$cpu_nova" ] && [ "$cpu_nova" != "$cpu_atual" ]; then
+    vars+=("CPU_QUOTA=$cpu_nova"); mudancas+=("CPU_QUOTA: ${cpu_atual:-(calculado)} -> $cpu_nova")
+  fi
+  if [ "${#vars[@]}" -eq 0 ]; then printf '\nNada a alterar.\n'; return 0; fi
+  if [ -n "$mem_nova" ] && [ "$mem_nova" -lt 1024 ]; then
+    aviso "memória abaixo de 1024 MB: jobs com Docker podem ser mortos por falta de memória."
+  fi
+  printf '\nMudanças em %s:\n' "$nome"
+  for linha in "${mudancas[@]}"; do printf '  %s\n' "$linha"; done
+  if ! sim_nao "Aplicar agora? (reaplica a instância sem registrar de novo; o diagnóstico roda de novo e o serviço só reinicia se a unidade mudar)" n; then
+    printf 'Nada foi alterado.\n'; return 0
+  fi
+  for v in "${vars[@]}"; do args+=(--var "$v"); done
+  if ! bash "$self" "${base[@]}" --nome "$nome" --sem-token "${args[@]}" < /dev/null; then
+    erro "a reaplicação falhou (veja as mensagens acima)." 1
+  fi
+  printf '\nEstado da instância:\n'
+  bash "$self" "${base[@]}" --nome "$nome" --status --quieto < /dev/null || aviso "não consegui ler o estado agora; rode --status depois."
+  printf '\nPara repetir sem o assistente:\n  ./registrar.sh'
+  for linha in "${base[@]}" --nome "$nome" --sem-token "${args[@]}"; do printf ' %q' "$linha"; done
+  printf '\n'
+}
+
+# Remove a instância $nome. O repositório ou a organização vêm da URL gravada na configuração; só gera o token de
+# remoção (e só chama a VPS) depois de confirmar e de checar que o gh é administrador.
+remover_do_menu() {
+  local cfg url
+  if ! cfg="$(bash "$self" "${base[@]}" --nome "$nome" --config --quieto < /dev/null 2>&1)"; then
+    printf '%s\n' "$cfg" >&2; erro "não consegui ler a configuração de $nome." 1
+  fi
+  url="$(valor_de RUNNER_URL "$cfg")"
+  repo=""; org=""
+  if [[ "$url" =~ ^https://github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)$ ]]; then repo="${BASH_REMATCH[1]}"
+  elif [[ "$url" =~ ^https://github\.com/([A-Za-z0-9._-]+)$ ]]; then org="${BASH_REMATCH[1]}"
+  else
+    erro "não achei o repositório nem a organização de $nome na configuração (RUNNER_URL=${url:-vazio}); use ./registrar.sh --vps … --nome $nome --repo <dono>/<repo> --remover." 1
+  fi
+  printf '\nAlvo da instância: %s\n' "${repo:-$org}"
+  if ! sim_nao "Remover a instância $nome? Apaga o runner, o usuário runner-$nome e os dados dela na VPS." n; then
+    printf 'Nada foi removido.\n'; return 0
+  fi
+  valida_alvo || erro "sem permissão para gerar o token de remoção; nada foi removido." 1
+  if [ -n "$repo" ]; then alvo=(--repo "$repo"); else alvo=(--org "$org"); fi
+  if ! bash "$self" "${base[@]}" --nome "$nome" "${alvo[@]}" --remover < /dev/null; then
+    erro "a remoção falhou (veja as mensagens acima)." 1
+  fi
+  printf '\nInstância %s removida.\n' "$nome"
+}
+
+# VPS que já tem instâncias: pergunta o que fazer. Instalar devolve o controle ao fluxo normal; as outras opções
+# fazem o que foi pedido e terminam o assistente.
+menu_instancias() { # <lista>
+  local lista="$1" escolha nomes_txt
+  nomes_txt="$(paste -sd, - <<< "$lista" | sed 's/,/, /g')"
+  printf '\nEsta VPS já tem instâncias: %s.\nO que você quer fazer?\n' "$nomes_txt"
+  printf '  1) Instalar uma instância nova\n  2) Ver o estado de uma instância\n'
+  printf '  3) Ver ou alterar a configuração de uma instância\n  4) Remover uma instância\n'
+  while :; do
+    pergunta escolha "Escolha (1-4)" 1
+    case "$escolha" in 1 | 2 | 3 | 4) break ;; *) aviso "responda 1, 2, 3 ou 4." ;; esac
+  done
+  if [ "$escolha" = 1 ]; then return 0; fi
+  escolher_instancia "$lista"
+  case "$escolha" in
+    2) if ! bash "$self" "${base[@]}" --nome "$nome" --status --quieto < /dev/null; then erro "não consegui ler o estado de $nome." 1; fi ;;
+    3) configurar_instancia ;;
+    4) remover_do_menu ;;
+  esac
+  exit 0
+}
+
 # Runner self-hosted em repositório público: qualquer pessoa pode abrir um PR de um fork, e os workflows de PR
 # rodariam no servidor. Só avisa e pede confirmação; não bloqueia. Devolve 0 para seguir e 1 para parar.
 # Falha ao consultar a visibilidade não impede: avisa e segue. Organizações não são consultadas (a visibilidade
@@ -369,7 +497,7 @@ avaliar_painel() {
 
 assistente() {
   local mem="" cpu="" rot="" self="${BASH_SOURCE[0]}" alvo_texto padrao_nome resposta v
-  local saida saida_ok reserva=1024 minimo=2048
+  local saida saida_ok reserva=1024 minimo=2048 lista
   local -a novos=()
   local -a base=() alvo=()
 
@@ -400,6 +528,14 @@ assistente() {
     aviso "não consegui conectar em $vps. Confira host, porta e chave. O assistente usa BatchMode: chave com senha precisa estar no ssh-agent."
     vps=""; chave=""
   done
+
+  # 1a. VPS que já tem instâncias: menu (instalar, ver o estado, ver/alterar a configuração, remover). Quem passou
+  # --nome, --repo ou --org já disse que quer instalar: segue direto.
+  if [ -z "$nome" ] && [ -z "$repo" ] && [ -z "$org" ]; then
+    montar_base servidor
+    lista="$(bash "$self" "${base[@]}" --listar --quieto < /dev/null 2> /dev/null)" || lista=""
+    if [ -n "$lista" ]; then menu_instancias "$lista"; fi
+  fi
 
   # 1b. Painel do servidor: se a VPS não cabe o runner, para aqui, antes de perguntar o repositório.
   avaliar_painel servidor
@@ -482,15 +618,15 @@ assistente() {
 
 if [ "$n_args" -eq 0 ] && [ -t 0 ] && [ -t 1 ]; then interativo=1; fi
 if [ "$interativo" -eq 1 ]; then
-  [ "$modo" = instalar ] || erro "--interativo só serve para instalar (sem --status, --so-checar, --remover ou --sem-token)"
+  [ "$modo" = instalar ] || erro "--interativo só serve para instalar (sem --status, --so-checar, --listar, --config, --remover ou --sem-token)"
   [ "$mostrar" -eq 0 ] || erro "--interativo não combina com --mostrar"
   assistente
   exit 0
 fi
 
 [ -n "$vps" ] || erro "falta --vps root@<vps>[:porta] (ou use --interativo)"
-# O painel do servidor (--so-checar) dispensa o nome da instância; os demais modos exigem.
-if [ -n "$nome" ] || [ "$modo" != so-checar ]; then
+# O painel do servidor (--so-checar) e a lista (--listar) dispensam o nome da instância; os demais modos exigem.
+if [ -n "$nome" ] || { [ "$modo" != so-checar ] && [ "$modo" != listar ]; }; then
   [ -n "$nome" ] || erro "falta --nome <nome>"
   [[ "$nome" =~ ^[a-z0-9-]+$ ]] || erro "--nome só aceita [a-z0-9-]: $nome"
 fi
@@ -522,7 +658,7 @@ precisa_token=0
 case "$modo" in
   instalar) [ -n "$alvo_api" ] || erro "instalar precisa de --repo ou --org"; precisa_token=1 ;;
   remover) [ -n "$alvo_api" ] || erro "--remover precisa de --repo ou --org (token de remoção)"; precisa_token=1 ;;
-  so-checar | status | sem-token) ;;
+  so-checar | listar | config | status | sem-token) ;;
 esac
 
 # Token pela API, só quando necessário. Nunca é impresso.
@@ -554,6 +690,8 @@ montar_env() {
 argumento=""
 case "$modo" in
   so-checar) argumento="--so-checar" ;;
+  listar) argumento="--listar" ;;
+  config) argumento="--config" ;;
   status) argumento="--status" ;;
   remover) argumento="--remover" ;;
 esac

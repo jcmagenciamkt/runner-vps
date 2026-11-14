@@ -37,12 +37,13 @@ Ele pergunta, valida e só instala depois da sua confirmação:
 
 1. confere se o `gh` está autenticado (antes de qualquer pergunta);
 2. **como conectar**: se o seu `~/.ssh/config` tiver `Host` salvos, a primeira pergunta é *"usar um Host salvo (1) ou informar o IP (2)"*. Escolhendo **1**, ele lista os Hosts numerados, cada um com `usuário@hostname:porta`, e você escolhe pelo número; usuário, porta e chave vêm do arquivo (inclusive `IdentityFile` e `ProxyJump`). Escolhendo **2** (ou se não houver Hosts salvos, caso em que a pergunta nem aparece), ele pede **só o IP ou nome do host**, depois a **porta** (Enter = 22), **verifica se algo responde como SSH** nela e só então pergunta o **usuário** (Enter = `root`) e a chave. Nos dois casos termina com um teste de conexão de verdade. Só o arquivo `~/.ssh/config` é lido: `Include` não é seguido (mas um alias vindo de um `Include` ainda funciona se você digitar o nome em **2**);
-3. o **painel do servidor** (veja abaixo), **logo depois de conectar e antes de perguntar o repositório**: sistema, Docker, instâncias e recursos. Se o veredito for "não cabe", para aí, sem perguntar mais nada nem gerar token. Se o motivo for **memória**, ele explica as saídas e oferece **ajustar a reserva e o mínimo de memória e reavaliar o painel** (veja "Quando não cabe por memória");
-4. repositório (`<dono>/<repo>`) ou organização, conferindo que você é **administrador**. Se o repositório for **público**, ele avisa do risco (qualquer pessoa pode abrir um pull request de um fork, e os workflows rodariam no seu servidor; o GitHub recomenda runner self-hosted só com repositórios privados) e pergunta *"Continuar mesmo assim?"* (padrão: não). Se não conseguir consultar a visibilidade, avisa e segue; para organizações não consulta;
-5. nome da instância (sugerido a partir do alvo), avisando se **já existe** na VPS;
-6. opções avançadas, só se você quiser: memória máxima, cota de CPU, rótulos e Docker rootless;
-7. o **painel desta instância**, que completa o do servidor com a situação da instância, os avisos que dependem do repositório e o veredito final já com as suas opções (mostra só a parte nova, sem repetir o servidor). O ajuste de memória também é oferecido aqui, se for ele o problema;
-8. um resumo e a confirmação (padrão: não). Só então instala, mostra o `--status` e imprime o **comando equivalente sem o assistente**, para repetir noutra VPS.
+3. **se a VPS já tiver instâncias** (e você não passou `--nome`, `--repo` nem `--org`), um **menu**: *instalar uma instância nova* (padrão, segue os passos abaixo), *ver o estado*, *ver ou alterar a configuração* ou *remover* uma instância (escolhida pelo número, ou direto se houver só uma). Alterar a configuração mostra o que está gravado e pergunta a **memória máxima** e a **cota de CPU** (Enter mantém); só o que mudou é reaplicado, **sem token e sem registrar de novo**. Remover confirma (padrão: não), confere que você é administrador e usa o repositório ou a organização gravados na configuração;
+4. o **painel do servidor** (veja abaixo), **logo depois de conectar e antes de perguntar o repositório**: sistema, Docker, instâncias e recursos. Se o veredito for "não cabe", para aí, sem perguntar mais nada nem gerar token. Se o motivo for **memória**, ele explica as saídas e oferece **ajustar a reserva e o mínimo de memória e reavaliar o painel** (veja "Quando não cabe por memória");
+5. repositório (`<dono>/<repo>`) ou organização, conferindo que você é **administrador**. Se o repositório for **público**, ele avisa do risco (qualquer pessoa pode abrir um pull request de um fork, e os workflows rodariam no seu servidor; o GitHub recomenda runner self-hosted só com repositórios privados) e pergunta *"Continuar mesmo assim?"* (padrão: não). Se não conseguir consultar a visibilidade, avisa e segue; para organizações não consulta;
+6. nome da instância (sugerido a partir do alvo), avisando se **já existe** na VPS;
+7. opções avançadas, só se você quiser: memória máxima, cota de CPU, rótulos e Docker rootless;
+8. o **painel desta instância**, que completa o do servidor com a situação da instância, os avisos que dependem do repositório e o veredito final já com as suas opções (mostra só a parte nova, sem repetir o servidor). O ajuste de memória também é oferecido aqui, se for ele o problema;
+9. um resumo e a confirmação (padrão: não). Só então instala, mostra o `--status` e imprime o **comando equivalente sem o assistente**, para repetir noutra VPS.
 
 Respostas inválidas repetem a pergunta; Ctrl-C ou fim da entrada cancelam sem instalar. O assistente **não grava nada em disco** (nem perfil, nem histórico) e **nunca pergunta o token**: ele é gerado pelo `gh` só no passo de instalação. Argumentos que você já passar (`--vps`, `--repo`, `--nome`…) pulam as perguntas deles. O `--vps` também aceita o nome de um `Host` do `~/.ssh/config` (`./registrar.sh --vps meu-servidor --repo <dono>/<repo> --nome <nome>`), sem `usuário@` nem `:porta`. Como o `ssh` roda com `BatchMode`, uma chave com senha precisa estar no `ssh-agent`.
 
@@ -73,6 +74,8 @@ Outras formas:
 
 ```bash
 ./registrar.sh --vps root@<vps> --nome <nome> --status         # estado da instância
+./registrar.sh --vps root@<vps> --listar                       # nomes das instâncias da VPS
+./registrar.sh --vps root@<vps> --nome <nome> --config         # configuração gravada da instância (CHAVE=valor)
 ./registrar.sh --vps root@<vps> --nome <nome> --sem-token      # atualizar limites/extras sem registrar de novo
 ./registrar.sh --vps root@<vps> --repo <dono>/<repo> --nome <nome> --remover
 ./registrar.sh … --mostrar                                     # imprime o que seria enviado (token redigido) e não conecta
@@ -86,7 +89,7 @@ Sem o `registrar.sh`, o equivalente à mão é enviar as variáveis e o script p
 { printf 'export RUNNER_URL=%q RUNNER_NOME=%q RUNNER_TOKEN=%q\n' https://github.com/<dono>/<repo> <nome> "$(gh api -X POST repos/<dono>/<repo>/actions/runners/registration-token --jq .token)"; cat instalar.sh; } | ssh root@<vps> 'bash -s'
 ```
 
-Para um subcomando, use `bash -s -- --so-checar` (ou `--status`, `--remover`).
+Para um subcomando, use `bash -s -- --so-checar` (ou `--listar`, `--config`, `--status`, `--remover`).
 
 ## O que o `instalar.sh` faz
 
@@ -149,8 +152,9 @@ e o equivalente na VPS vem de `HOSTS_EXTRAS`, `PACOTES_EXTRAS`, `EXTRAS_SH` ou `
 ## Operação
 
 - **Ver o estado:** `./registrar.sh --vps root@<vps> --nome <nome> --status` (usuário, serviços, limites, registro e a última linha do log).
+- **Ver a configuração:** `./registrar.sh --vps root@<vps> --nome <nome> --config` (o que está gravado em `/etc/runner-vps/<nome>.conf`; nunca há token nele). `--listar` mostra os nomes das instâncias. O assistente reúne tudo isso no menu.
 - **Administrar na VPS:** `sudo -u runner-<nome> …` e `systemctl --user -M runner-<nome>@ status runner-vps`.
-- **Mudar limites ou extras:** `./registrar.sh … --sem-token --var MEMORY_MAX_MB=3072` (só reescreve o que mudou e faz `daemon-reload`).
+- **Mudar limites ou extras:** `./registrar.sh … --sem-token --var MEMORY_MAX_MB=3072` (só reescreve o que mudou e faz `daemon-reload`; o diagnóstico roda de novo e recusa se o novo limite não couber). Mudar **rótulos** ou o **nome no GitHub** exige registrar de novo, ou seja, token (`./registrar.sh … --repo … --rotulos …`).
 - **Se o runner cair:** os jobs ficam em *Waiting for a runner* e o GitHub os cancela em 24 h. Troque `CI_RUNS_ON` para voltar aos runners do GitHub enquanto resolve, ou reinicie: `systemctl --user -M runner-<nome>@ restart runner-vps`. Causa comum: **disco cheio**; limpe como o usuário do runner com `docker system prune -af`.
 - **Remover:** `./registrar.sh … --repo <dono>/<repo> --nome <nome> --remover`. Apaga o HOME, o `.conf`, a fatia e a linha do `/etc/hosts`; o usuário só é apagado se não houver arquivo dele fora do HOME; as linhas de `/etc/subuid` ficam. Se o `config.sh remove` falhar (token de remoção expirado, por exemplo), nada é apagado.
 
