@@ -121,6 +121,25 @@ Modificar: `README.md` (Task 5).
 - [x] Tirar o aviso "em planejamento". Passo a passo: pré-requisitos (`gh` como administrador, SSH root); `registrar.sh` como caminho principal, com os exemplos de cada subcomando, e o equivalente à mão pelo stdin do SSH; `--so-checar`, `--status`, `--remover`; tabela de todas as variáveis com padrão; a convenção do consumidor (4.5) com o trecho de YAML; operação (ver, se cair, disco cheio); limites de segurança; como rodar os testes (`testes/rodar.sh`).
 - [x] Commit: `docs: README com instalação, variáveis, convenção do consumidor e operação`.
 
+## Task 6: assistente interativo no `registrar.sh`
+
+**Files:** modificar `registrar.sh`; criar `testes/test_assistente.sh`; modificar `README.md`.
+**Regras:** design 4.6 (assistente interativo). Sem gravar nada em disco; o token nunca é perguntado.
+- [x] Testes primeiro (`gh`, `ssh` e `instalar.sh` falsos, respostas pelo stdin):
+  1. fluxo feliz (repositório, nome sugerido, sem avançado, confirma): teste de conexão, checagem de instância, `--so-checar`, instalação e `--status`, nessa ordem; o token só é gerado depois da confirmação;
+  2. validação com repetição da pergunta: VPS (`abc`, porta inválida), chave inexistente, alvo (`a/b/c`), nome (`Ex Emplo`); valores inválidos nunca chegam ao `ssh` nem ao `gh`;
+  3. conexão falhando na primeira tentativa: mensagem, pergunta de novo, segunda tentativa passa;
+  4. `gh auth status` falhando: saída 1, antes de qualquer `ssh`; repositório sem permissão de administrador: recusa e pergunta de novo; organização com papel `admin`: passa e usa `orgs/<org>`;
+  5. instância já existente: avisa e pergunta; "não" volta a pedir o nome; "sim" segue;
+  6. avançado: valores válidos viram `MEMORY_MAX_MB`, `CPU_QUOTA`, `RUNNER_ROTULOS` e `DOCKER_ROOTLESS=0`; inválidos repetem;
+  7. `--so-checar` com "não cabe": saída 1, nenhum token gerado, nada instalado;
+  8. confirmação negada: saída 0, nenhum token gerado, nada instalado; EOF no meio: saída 1, nada instalado;
+  9. argumentos já passados pulam as perguntas; sem argumentos e sem terminal: saída 2; `--interativo` com `--status`: saída 2;
+  10. o token não aparece na saída, nos argumentos do `ssh` nem no comando equivalente impresso; o script não pergunta o token nem grava arquivo.
+- [x] Implementar no `registrar.sh` (`--interativo`, ou sem argumentos num terminal), reaproveitando o próprio script para `--so-checar`, instalar e `--status`.
+- [x] README: seção do assistente.
+- [x] Commit: `feat: registrar.sh ganha assistente interativo que pergunta e valida antes de instalar`.
+
 ## Fecho
 
 - [x] `shellcheck` limpo e `testes/rodar.sh` verde, local e no CI do projeto.
