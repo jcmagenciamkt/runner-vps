@@ -4,7 +4,7 @@
 # As variáveis vêm do ambiente; o stdin não é lido. RUNNER_TOKEN nunca é impresso, gravado nem passado na
 # linha de comando: vai ao config.sh pela variável ACTIONS_RUNNER_INPUT_TOKEN, só durante a chamada.
 #
-# Uso: instalar.sh [--so-checar | --listar | --config | --status | --verificar | --remover]
+# Uso: instalar.sh [--so-checar | --listar | --config | --status | --verificar | --monitorar | --monitorar-remover | --remover]
 #   --so-checar mostra o painel de decisão (somente leitura) e termina com o veredito. Sem RUNNER_NOME,
 #   mostra só o servidor (sem a seção da instância).
 #   --listar imprime os nomes das instâncias desta VPS, um por linha (somente leitura; dispensa RUNNER_NOME).
@@ -16,8 +16,9 @@ aviso() { printf 'AVISO: %s\n' "$*" >&2; }
 erro() { printf 'ERRO: %s\n' "$*" >&2; }
 uso() {
   cat >&2 <<'USO'
-Uso: instalar.sh [--so-checar | --listar | --config | --status | --verificar | --remover]
+Uso: instalar.sh [--so-checar | --listar | --config | --status | --verificar | --monitorar | --monitorar-remover | --remover]
 Variáveis: RUNNER_NOME (obrigatória, [a-z0-9-]+); RUNNER_URL (no primeiro instalar); RUNNER_TOKEN (registro e --remover);
+--monitorar (do servidor, sem RUNNER_NOME) aceita MONITOR_HORA (HH:MM, padrão 03:00).
 opcionais: RUNNER_NOME_GITHUB, RUNNER_ROTULOS, RUNNER_VERSAO, RUNNER_SHA256, DOCKER_ROOTLESS, RESERVA_MB, MEM_MIN_MB,
 DISCO_MIN_GB, MEMORY_MAX_MB, CPU_QUOTA, HOSTS_EXTRAS, PACOTES_EXTRAS, EXTRAS_SH, EXTRAS_SHA256, ENV_EXTRAS,
 JANELA (HH:MM-HH:MM, horário da VPS), VALIDADE (AAAA-MM-DD), JANELA_ESPERA_MIN (padrão 120).
@@ -41,7 +42,7 @@ CHAVES=(RUNNER_URL RUNNER_NOME_GITHUB RUNNER_ROTULOS DOCKER_ROOTLESS RESERVA_MB 
 SUB="${1:-}"
 if [ "$#" -gt 1 ]; then uso; exit 2; fi
 case "$SUB" in
-  "" | --so-checar | --listar | --config | --status | --verificar | --remover) ;;
+  "" | --so-checar | --listar | --config | --status | --verificar | --monitorar | --monitorar-remover | --remover) ;;
   *) erro "argumento desconhecido: $SUB"; uso; exit 2 ;;
 esac
 
@@ -49,7 +50,7 @@ RUNNER_NOME="${RUNNER_NOME:-}"
 # O painel (--so-checar) e a lista (--listar) funcionam só para o servidor, sem nome de instância (o assistente
 # os usa antes de perguntar qualquer coisa sobre a instância); todo o resto exige RUNNER_NOME.
 SEM_NOME=0
-if [ -z "$RUNNER_NOME" ] && { [ "$SUB" = --so-checar ] || [ "$SUB" = --listar ]; }; then SEM_NOME=1; fi
+if [ -z "$RUNNER_NOME" ] && { [ "$SUB" = --so-checar ] || [ "$SUB" = --listar ] || [ "$SUB" = --monitorar ] || [ "$SUB" = --monitorar-remover ]; }; then SEM_NOME=1; fi
 if [ -z "$RUNNER_NOME" ] && [ "$SEM_NOME" -eq 0 ]; then erro "RUNNER_NOME é obrigatório."; uso; exit 2; fi
 if [ -n "$RUNNER_NOME" ] && ! [[ "$RUNNER_NOME" =~ ^[a-z0-9-]+$ ]]; then
   erro "RUNNER_NOME inválido: use só letras minúsculas, números e hífen."; exit 2
@@ -869,6 +870,182 @@ executar_extras() {
 
 # ---------- estado ----------
 # Os nomes das instâncias desta VPS (um por linha, em ordem), a partir de /etc/runner-vps/*.conf.
+# ---------- monitoramento diário (--monitorar) ----------
+# Do servidor, não de uma instância: um timer de sistema roda o script uma vez por dia e acrescenta ao CSV uma
+# linha por instância (ou uma linha "-" se não houver nenhuma). O CSV é de root, 640, sem token nem segredo, e o
+# logrotate o limita. O script nunca derruba o registro por causa de uma métrica: o que não der para ler vira UNKNOWN.
+MON_FS="$RAIZ/etc/runner-vps/monitor.sh"
+MON_REAL="/etc/runner-vps/monitor.sh"
+CSV_FS="$RAIZ/var/log/runner-vps-diario.csv"
+LOGROTATE_FS="$RAIZ/etc/logrotate.d/runner-vps-diario"
+
+conteudo_monitor() {
+  cat <<'MONITOR'
+#!/usr/bin/env bash
+# runner-vps: registro diário de uso (gerado pelo instalar.sh; não edite). Acrescenta ao CSV uma linha por instância.
+#   vps_*       métricas do servidor INTEIRO: incluem todos os processos, não só o runner.
+#   runner_*    todos os processos do usuário da instância (o Runner.Listener, os jobs e o que eles lançam).
+#   listener_*  só o processo Runner.Listener (cpu = média desde que ele iniciou, como o ps informa).
+# Nunca grava token nem segredo. O que não der para ler vira UNKNOWN.
+set -u
+export LC_ALL=C
+raiz="${RAIZ:-}"
+csv="$raiz/var/log/runner-vps-diario.csv"
+estados="$raiz/var/lib/runner-vps"
+sistema="${SYSTEMCTL_CMD:-systemctl}"; pgrep_cmd="${PGREP_CMD:-pgrep}"; ps_cmd="${PS_CMD:-ps}"; df_cmd="${DF_CMD:-df}"
+dorme="${SLEEP_CMD:-sleep}"; id_cmd="${ID_CMD:-id}"; host_cmd="${HOSTNAME_CMD:-hostname}"
+agora="${MONITOR_AGORA:-$(date -Iseconds)}"
+cabecalho="data_hora,hostname,instancia,servico,ultimo_estado_conhecido,uptime_s,carga_1m,carga_5m,carga_15m,vps_cpu_pct,vps_mem_usada_mb,vps_mem_disp_mb,vps_mem_total_mb,vps_disco_usado_mb,vps_disco_total_mb,vps_disco_usado_pct,runner_procs,runner_filhos,runner_mem_total_mb,listener_pid,listener_cpu_pct,listener_mem_mb"
+U=UNKNOWN
+
+amostra_cpu() { awk '/^cpu / { t = 0; for (i = 2; i <= 9; i++) t += $i; print t, $5 + $6; exit }' "$raiz/proc/stat" 2> /dev/null; }
+cpu0="$(amostra_cpu)"; "$dorme" 1; cpu1="$(amostra_cpu)"
+vps_cpu=$U
+if [ -n "$cpu0" ] && [ -n "$cpu1" ]; then
+  vps_cpu="$(awk -v a="$cpu0" -v b="$cpu1" 'BEGIN { split(a, x, " "); split(b, y, " "); dt = y[1] - x[1]; di = y[2] - x[2]; if (dt > 0) printf "%.1f", 100 * (dt - di) / dt; else printf "UNKNOWN" }')"
+fi
+mem_total=$U; mem_disp=$U; mem_usada=$U
+read -r mt md < <(awk '/^MemTotal:/ { t = $2 } /^MemAvailable:/ { d = $2 } END { if (t != "" && d != "") printf "%d %d", t / 1024, d / 1024 }' "$raiz/proc/meminfo" 2> /dev/null) || true
+if [ -n "${mt:-}" ] && [ -n "${md:-}" ]; then mem_total=$mt; mem_disp=$md; mem_usada=$((mt - md)); fi
+uptime_s="$(awk '{ printf "%d", $1 }' "$raiz/proc/uptime" 2> /dev/null)"; uptime_s="${uptime_s:-$U}"
+c1=$U; c5=$U; c15=$U
+if [ -r "$raiz/proc/loadavg" ]; then read -r c1 c5 c15 _ < "$raiz/proc/loadavg" || { c1=$U; c5=$U; c15=$U; }; fi
+d_usado=$U; d_total=$U; d_pct=$U
+read -r du dt dp < <("$df_cmd" -BM --output=used,size,pcent / 2> /dev/null | awk 'NR == 2 { gsub(/[M%]/, ""); print $1, $2, $3 }') || true
+if [ -n "${du:-}" ] && [ -n "${dt:-}" ] && [ -n "${dp:-}" ]; then d_usado=$du; d_total=$dt; d_pct=$dp; fi
+host="$("$host_cmd" 2> /dev/null)"; host="${host:-$U}"
+comum="$uptime_s,$c1,$c5,$c15,$vps_cpu,$mem_usada,$mem_disp,$mem_total,$d_usado,$d_total,$d_pct"
+
+linhas=""
+instancias=()
+for f in "$raiz"/etc/runner-vps/*.conf; do
+  [ -e "$f" ] || continue
+  f="${f##*/}"; instancias+=("${f%.conf}")
+done
+if [ "${#instancias[@]}" -eq 0 ]; then
+  linhas="$agora,$host,-,$U,$U,$comum,$U,$U,$U,$U,$U,$U"
+fi
+for n in "${instancias[@]}"; do
+  usuario="runner-$n"
+  servico=$U
+  if "$id_cmd" -u "$usuario" > /dev/null 2>&1; then
+    s="$("$sistema" --user -M "$usuario@" is-active runner-vps 2> /dev/null)" || true
+    s="${s%%$'\n'*}"; s="${s//[ ,]/}"
+    if [ -n "$s" ]; then servico="$s"; fi
+  fi
+  if [ "$servico" != "$U" ]; then
+    ultimo="$servico"
+    mkdir -p "$estados" 2> /dev/null && printf '%s\n' "$servico" > "$estados/$n.ultimo" 2> /dev/null
+  else
+    ultimo="$(head -n 1 "$estados/$n.ultimo" 2> /dev/null)"; ultimo="${ultimo:-$U}"
+  fi
+  procs=$U; filhos=$U; mem_runner=$U; pid=$U; l_cpu=$U; l_mem=$U
+  if "$id_cmd" -u "$usuario" > /dev/null 2>&1; then
+    procs="$("$ps_cmd" -u "$usuario" -o pid= 2> /dev/null | grep -c . || true)"
+    mem_runner="$("$ps_cmd" -u "$usuario" -o rss= 2> /dev/null | awk '{ s += $1 } END { printf "%d", s / 1024 }')"
+    p="$("$pgrep_cmd" -u "$usuario" -f Runner.Listener 2> /dev/null | head -n 1)" || true
+    if [ -n "$p" ]; then
+      pid=$p
+      filhos="$("$ps_cmd" -eo pid=,ppid= 2> /dev/null | awk -v r="$p" '{ pai[$1] = $2 } END { n = 0; for (x in pai) { q = x; k = 0; while ((q in pai) && k < 200) { q = pai[q]; if (q == r) { n++; break }; k++ } } print n }')"
+      read -r lc lr < <("$ps_cmd" -o pcpu=,rss= -p "$p" 2> /dev/null) || true
+      if [ -n "${lc:-}" ] && [ -n "${lr:-}" ]; then l_cpu=$lc; l_mem=$((lr / 1024)); fi
+    fi
+  fi
+  linhas="${linhas:+$linhas$'\n'}$agora,$host,$n,$servico,$ultimo,$comum,${procs:-$U},$filhos,${mem_runner:-$U},$pid,$l_cpu,$l_mem"
+done
+
+mkdir -p "$(dirname "$csv")" 2> /dev/null
+if [ ! -s "$csv" ]; then ( umask 027; printf '%s\n' "$cabecalho" > "$csv" ) || exit 1; fi
+printf '%s\n' "$linhas" >> "$csv" || exit 1
+chmod 640 "$csv" 2> /dev/null
+exit 0
+MONITOR
+}
+
+conteudo_monitor_servico() {
+  cat <<UNIDADE
+[Unit]
+Description=Registro diario de uso do runner-vps (CSV)
+
+[Service]
+Type=oneshot
+ExecStart=$MON_REAL
+NoNewPrivileges=yes
+PrivateTmp=yes
+UNIDADE
+}
+
+conteudo_monitor_timer() {
+  cat <<UNIDADE
+[Unit]
+Description=Registro diario de uso do runner-vps
+
+[Timer]
+OnCalendar=*-*-* ${MONITOR_HORA}:00
+Persistent=true
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target
+UNIDADE
+}
+
+conteudo_logrotate() {
+  cat <<'LOGROTATE'
+/var/log/runner-vps-diario.csv {
+    monthly
+    maxsize 1M
+    rotate 12
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 640 root root
+}
+LOGROTATE
+}
+
+instalar_monitoramento() {
+  local mudou=0
+  MONITOR_HORA="${MONITOR_HORA-03:00}"
+  if ! [[ "$MONITOR_HORA" =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]]; then
+    erro "MONITOR_HORA inválida: use HH:MM, de 00:00 a 23:59 (ex.: 03:00)."; exit 2
+  fi
+  gravar_se_mudou "$MON_FS" 755 < <(conteudo_monitor)
+  if [ "$ALTEROU" = 1 ]; then mudou=1; passo "script do monitoramento gravado em $MON_REAL"; fi
+  gravar_se_mudou "$UNIDADES_FS/runner-vps-monitor.service" 644 < <(conteudo_monitor_servico)
+  if [ "$ALTEROU" = 1 ]; then mudou=1; fi
+  gravar_se_mudou "$UNIDADES_FS/runner-vps-monitor.timer" 644 < <(conteudo_monitor_timer)
+  if [ "$ALTEROU" = 1 ]; then mudou=1; fi
+  gravar_se_mudou "$LOGROTATE_FS" 644 < <(conteudo_logrotate)
+  if [ ! -e "$CSV_FS" ]; then
+    mkdir -p "$(dirname "$CSV_FS")"
+    ( umask 027; : > "$CSV_FS" )
+    "$CHOWN" root:root "$CSV_FS"
+    passo "CSV criado (root, 640)"
+  fi
+  chmod 640 "$CSV_FS"
+  if [ "$mudou" = 1 ]; then "$SYSTEMCTL" daemon-reload; fi
+  "$SYSTEMCTL" enable --now runner-vps-monitor.timer
+  passo "monitoramento diário ligado: timer às $MONITOR_HORA (horário da VPS)"
+  printf 'CSV: /var/log/runner-vps-diario.csv (root, 640; rotação em /etc/logrotate.d/runner-vps-diario)\n'
+  printf 'Rodar uma vez agora: sudo %s\n' "$MON_REAL"
+  printf 'Colunas vps_*: o servidor inteiro, com todos os processos (não só o runner); runner_*: os processos do usuário da instância.\n'
+  printf 'Colunas listener_*: só o Runner.Listener (UNKNOWN quando ele não existe). Para desligar: --monitorar-remover.\n'
+}
+
+remover_monitoramento() {
+  local houve=0 f
+  if [ -e "$UNIDADES_FS/runner-vps-monitor.timer" ]; then
+    "$SYSTEMCTL" disable --now runner-vps-monitor.timer || aviso "não foi possível desabilitar o timer do monitoramento."
+  fi
+  for f in "$UNIDADES_FS/runner-vps-monitor.timer" "$UNIDADES_FS/runner-vps-monitor.service" "$MON_FS" "$LOGROTATE_FS"; do
+    if [ -e "$f" ]; then rm -f "$f"; houve=1; fi
+  done
+  if [ "$houve" = 1 ]; then "$SYSTEMCTL" daemon-reload; passo "monitoramento diário removido"; else passo "monitoramento diário não estava instalado"; fi
+  if [ -e "$CSV_FS" ]; then printf 'O CSV foi mantido: /var/log/runner-vps-diario.csv (apague à mão se não precisar mais).\n'; fi
+}
+
 listar_instancias() {
   local f
   for f in "$RAIZ"/etc/runner-vps/*.conf; do
@@ -1081,6 +1258,10 @@ case "$SUB" in
     mostrar_estado ;;
   --verificar)
     verificar_instancia ;;
+  --monitorar)
+    instalar_monitoramento ;;
+  --monitorar-remover)
+    remover_monitoramento ;;
   --remover)
     remover_instancia ;;
   --so-checar)

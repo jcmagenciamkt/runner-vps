@@ -11,6 +11,8 @@
 #   registrar.sh --vps … --nome <nome> --status           estado da instância (sem token)
 #   registrar.sh --vps … --listar                         nomes das instâncias da VPS (sem token)
 #   registrar.sh --vps … --nome <nome> --config           configuração gravada da instância (sem token)
+#   registrar.sh --vps … --monitorar [--var MONITOR_HORA=03:00]   liga o registro diário de uso (CSV na VPS; sem token)
+#   registrar.sh --vps … --monitorar-remover              desliga o registro diário (o CSV fica)
 #   registrar.sh --vps … --nome <nome> --verificar        checklist pós-instalação: usuário, dono, serviço, processo,
 #                                                         ExecStart, journal (sem token; sai com 1 se algo falhar)
 #   registrar.sh --vps … --nome <nome> --sem-token --var CHAVE=valor   altera a configuração (sem token)
@@ -129,6 +131,8 @@ while [ $# -gt 0 ]; do
     --listar) modo="listar"; shift ;;
     --config) modo="config"; shift ;;
     --verificar) modo="verificar"; shift ;;
+    --monitorar) modo="monitorar"; shift ;;
+    --monitorar-remover) modo="monitorar-remover"; shift ;;
     --status) modo="status"; shift ;;
     --remover) modo="remover"; shift ;;
     --sem-token) modo="sem-token"; shift ;;
@@ -769,7 +773,7 @@ assistente() {
 
 if [ "$n_args" -eq 0 ] && [ -t 0 ] && [ -t 1 ]; then interativo=1; fi
 if [ "$interativo" -eq 1 ]; then
-  [ "$modo" = instalar ] || erro "--interativo só serve para instalar (sem --status, --so-checar, --listar, --config, --verificar, --remover ou --sem-token)"
+  [ "$modo" = instalar ] || erro "--interativo só serve para instalar (sem --status, --so-checar, --listar, --config, --verificar, --monitorar, --remover ou --sem-token)"
   [ "$mostrar" -eq 0 ] || erro "--interativo não combina com --mostrar"
   assistente
   exit 0
@@ -782,7 +786,7 @@ else
   [ -n "$vps" ] || erro "falta --vps root@<vps>[:porta], --local ou --interativo"
 fi
 # O painel do servidor (--so-checar) e a lista (--listar) dispensam o nome da instância; os demais modos exigem.
-if [ -z "$repos" ] && { [ -n "$nome" ] || { [ "$modo" != so-checar ] && [ "$modo" != listar ]; }; }; then
+if [ -z "$repos" ] && { [ -n "$nome" ] || { [ "$modo" != so-checar ] && [ "$modo" != listar ] && [ "$modo" != monitorar ] && [ "$modo" != monitorar-remover ]; }; }; then
   [ -n "$nome" ] || erro "falta --nome <nome>"
   [[ "$nome" =~ ^[a-z0-9-]+$ ]] || erro "--nome só aceita [a-z0-9-]: $nome"
 fi
@@ -800,7 +804,7 @@ done
 lote() {
   local r n i total min por_instancia saida resto
   local -a itens=() nomes=() novos=() feitas=() restantes=() base=() extras_orig=()
-  [ "$modo" = instalar ] || erro "--repos só serve para instalar (sem --status, --so-checar, --listar, --config, --verificar, --remover ou --sem-token)"
+  [ "$modo" = instalar ] || erro "--repos só serve para instalar (sem --status, --so-checar, --listar, --config, --verificar, --monitorar, --remover ou --sem-token)"
   [ -z "$repo" ] && [ -z "$org" ] || erro "--repos não combina com --repo nem --org"
   [ -z "$nome" ] || erro "--repos não combina com --nome: o nome de cada instância vem do repositório"
   [ -z "$nome_github" ] || erro "--repos não combina com --nome-github: cada instância precisa de um nome próprio no GitHub"
@@ -895,7 +899,7 @@ precisa_token=0
 case "$modo" in
   instalar) [ -n "$alvo_api" ] || erro "instalar precisa de --repo ou --org"; precisa_token=1 ;;
   remover) [ -n "$alvo_api" ] || erro "--remover precisa de --repo ou --org (token de remoção)"; precisa_token=1 ;;
-  so-checar | listar | config | status | verificar | sem-token) ;;
+  so-checar | listar | config | status | verificar | monitorar | monitorar-remover | sem-token) ;;
 esac
 
 # Token pela API, só quando necessário. Nunca é impresso.
@@ -930,6 +934,8 @@ case "$modo" in
   listar) argumento="--listar" ;;
   config) argumento="--config" ;;
   verificar) argumento="--verificar" ;;
+  monitorar) argumento="--monitorar" ;;
+  monitorar-remover) argumento="--monitorar-remover" ;;
   status) argumento="--status" ;;
   remover) argumento="--remover" ;;
 esac

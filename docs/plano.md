@@ -279,6 +279,17 @@ Modificar: `README.md` (Task 5).
 - [x] README e design.
 - [x] Commit: `feat: --verificar (checklist pós-instalação)`.
 
+## Task 18: monitoramento diário (`--monitorar`)
+
+**Files:** modificar `instalar.sh`, `registrar.sh`, `testes/test_registrar.sh`, criar `testes/test_monitorar.sh`, `README.md`, `docs/design.md`.
+**Regras:** design 4.6 (`--monitorar`). CSV de root, 640, sem token nem segredo; o registro nunca cai por causa de uma métrica.
+- [x] Testes primeiro (`test_monitorar.sh`, VPS falsa com `/proc`, `ps`, `pgrep`, `df`, `hostname` e `sleep` falsos): instalação (script 755, serviço, timer, logrotate, CSV 640 criado vazio, `chown root:root`, `daemon-reload`, `enable --now`, mensagens, script sem token), idempotência (o CSV não é tocado, sem `daemon-reload`), `MONITOR_HORA` (muda e rejeita valores inválidos sem escrever nada), remoção (o CSV fica; repetir não faz nada); o script (22 colunas; cada métrica; duas instâncias; segunda execução sem repetir o cabeçalho; token do ambiente fora do CSV; listener ausente, serviço parado, `systemctl` mudo com e sem histórico, usuário inexistente, sem instâncias, permissões refeitas, `/proc` ilegível, CSV impossível de gravar).
+- [x] `registrar.sh --monitorar` e `--monitorar-remover` (sem `--nome`, sem token, sem `gh`).
+- [x] Implementar `conteudo_monitor` e as funções de instalação e remoção.
+- [x] Mutação: 22 mutantes; o do `exit 1` ao acrescentar ganhou teste; o do `umask` na criação do CSV é equivalente (o `chmod 640` seguinte dá o mesmo resultado) e fica como defesa em profundidade.
+- [x] README e design.
+- [x] Commit: `feat: --monitorar (registro diário de uso em CSV)`.
+
 ## Fecho
 
 - [x] `shellcheck` limpo e `testes/rodar.sh` verde, local e no CI do projeto.
