@@ -144,6 +144,22 @@ done
 afirmar "instalar sem --nome: saída 2" "$([ "$(rodar --vps root@v --repo a/b)" = 2 ] && echo 0 || echo 1)"
 afirmar "nada foi enviado nesses erros" "$([ ! -e "$tmp/ssh.args" ] && echo 0 || echo 1)"
 
+# 15. --listar (sem --nome) e --config (com --nome): somente leitura, sem token, sem gh
+limpar
+codigo="$(rodar --vps root@vps.exemplo --listar --quieto)"
+afirmar "--listar sem --nome sai com 0 e repassa --listar" "$([ "$codigo" = 0 ] && grep -q -- 'bash -s -- --listar' "$tmp/ssh.args"; echo $?)"
+afirmar "--listar não envia RUNNER_NOME, RUNNER_URL nem token e não chama o gh" \
+  "$(! grep -qE 'RUNNER_(NOME|URL|TOKEN)' "$tmp/ssh.stdin" && [ ! -e "$tmp/gh.log" ]; echo $?)"
+limpar
+codigo="$(rodar --vps root@vps.exemplo --nome exemplo --config --quieto)"
+afirmar "--config com --nome sai com 0 e repassa --config" "$([ "$codigo" = 0 ] && grep -q -- 'bash -s -- --config' "$tmp/ssh.args"; echo $?)"
+afirmar "--config envia RUNNER_NOME, mas nunca token, e não chama o gh" \
+  "$(grep -q 'export RUNNER_NOME=exemplo' "$tmp/ssh.stdin" && ! grep -q RUNNER_TOKEN "$tmp/ssh.stdin" && [ ! -e "$tmp/gh.log" ]; echo $?)"
+limpar
+afirmar "--config sem --nome: saída 2 e nada enviado" "$([ "$(rodar --vps root@v --config)" = 2 ] && [ ! -e "$tmp/ssh.args" ] && echo 0 || echo 1)"
+afirmar "--interativo recusa --listar e --config" \
+  "$([ "$(rodar --interativo --listar --vps root@v)" = 2 ] && [ "$(rodar --interativo --config --vps root@v --nome x)" = 2 ] && echo 0 || echo 1)"
+
 # 12. os scripts de entrada são executáveis (o README manda rodar ./registrar.sh)
 for f in registrar.sh instalar.sh gancho-fim.sh; do
   afirmar "$f tem o bit de execução" "$([ -x "$aqui/../$f" ] && echo 0 || echo 1)"

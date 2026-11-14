@@ -225,6 +225,18 @@ Modificar: `README.md` (Task 5).
 - [x] README e design.
 - [x] Commit: `feat: assistente avisa quando o repositório é público e pede confirmação`.
 
+## Task 13: menu inicial e configuração de uma instância
+
+**Files:** modificar `instalar.sh`, `registrar.sh`, `testes/test_assistente.sh`, `testes/test_registrar.sh`, criar `testes/test_config.sh`, `README.md`, `docs/design.md`.
+**Regras:** design 4.6 (1a). Nada de token para ver ou alterar a configuração; remover só gera o token depois de confirmar e de checar administrador.
+- [x] Testes primeiro:
+  1. `instalar.sh --listar` (sem nome; vazio sem instâncias; nomes em ordem; só leitura) e `--config` (CHAVE=valor das chaves gravadas, sem token; instância inexistente: saída 1; sem nome: saída 2; só leitura);
+  2. `registrar.sh --listar` (sem `--nome`) e `--config` (com `--nome`) repassam o subcomando, sem token nem `gh`; `--interativo` recusa os dois;
+  3. assistente: sem instâncias não há menu; com instâncias aparecem as quatro opções (inválido repete; Enter = instalar; EOF sai com 1); com `--nome`/`--repo`/`--org` por argumento não há menu; estado (uma instância: direto; várias: número); configurar (mostra a configuração, Enter mantém, inválidos repetem, só o que mudou vai, sem token nem `gh`, resumo, confirmação padrão não, reaplicação falhando sai com 1, aviso abaixo de 1024 MB, "nada a alterar"); remover (confirmação padrão não, alvo vem da URL gravada: repositório ou organização, URL ausente é erro, administrador conferido antes do token, token de remoção só depois da confirmação e pelo stdin, falha da remoção sai com 1).
+- [x] Implementar `listar_instancias` e `mostrar_config` no `instalar.sh` (`SEM_NOME` vale para `--so-checar` e `--listar`); modos `--listar` e `--config` no `registrar.sh`; `menu_instancias`, `escolher_instancia`, `configurar_instancia` e `remover_do_menu` no assistente.
+- [x] README e design.
+- [x] Commit: `feat: menu do assistente (estado, configuração, remoção) e --listar/--config`.
+
 ## Fecho
 
 - [x] `shellcheck` limpo e `testes/rodar.sh` verde, local e no CI do projeto.

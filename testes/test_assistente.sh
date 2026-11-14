@@ -23,7 +23,7 @@ case "$*" in
   *permissions.admin*) cat "$ctl/gh_admin" 2> /dev/null || echo true; exit 0 ;;
   *.private*) [ ! -f "$ctl/gh_privado_falha" ] || exit 1; cat "$ctl/gh_privado" 2> /dev/null || echo true; exit 0 ;;
   *memberships/orgs*) cat "$ctl/gh_papel" 2> /dev/null || echo admin; exit 0 ;;
-  *registration-token*) printf '%s\n' "$TOKEN_FALSO"; exit 0 ;;
+  *registration-token* | *remove-token*) printf '%s\n' "$TOKEN_FALSO"; exit 0 ;;
 esac
 exit 0
 CORPO
@@ -65,6 +65,12 @@ case "$tudo" in
           *) echo 'VEREDITO: não cabe: memória (mínimo 2048)'; exit 1 ;;
         esac ;;
       --status) echo 'ESTADO FALSO'; exit 0 ;;
+      --listar) cat "$ctl/instancias" 2> /dev/null; exit 0 ;;
+      --config)
+        if [ -f "$ctl/config" ]; then cat "$ctl/config"
+        else printf 'RUNNER_URL=https://github.com/dono/repo\nRUNNER_ROTULOS=exemplo\nDOCKER_ROOTLESS=1\nRESERVA_MB=1024\nMEM_MIN_MB=2048\nMEMORY_MAX_MB=4096\nCPU_QUOTA=200\n'; fi
+        exit 0 ;;
+      --remover) echo 'REMOVIDO'; exit "$(cat "$ctl/remover" 2> /dev/null || echo 0)" ;;
       *) echo 'INSTALADO'; exit "$(cat "$ctl/instalar" 2> /dev/null || echo 0)" ;;
     esac ;;
   *"test -e /etc/runner-vps/"*)
@@ -115,6 +121,16 @@ PADRAO_INSTALAR='bash -s -- *$'   # `bash -s -- ` sem subcomando = instalação
 instalou() { houve "$PADRAO_INSTALAR"; }
 inst_stdin() { grep -l RUNNER_TOKEN "$TMP"/stdin.* 2> /dev/null | head -n 1; }   # o que foi enviado na instalação
 gerou_token() { houve 'registration-token'; }
+gerou_token_de_remocao() { houve 'remove-token'; }
+# envios_sem_token <padrão>: quantos envios (stdin do ssh) casam com o padrão e não levam RUNNER_TOKEN
+envios_sem_token() {
+  local f n=0
+  for f in "$TMP"/stdin.*; do
+    [ -e "$f" ] || continue
+    if grep -qE -- "$1" "$f" && ! grep -q RUNNER_TOKEN "$f"; then n=$((n + 1)); fi
+  done
+  echo "$n"
+}
 
 CONEXAO=(vps.exemplo '' root '')   # host, porta (Enter = 22), usuário, chave (Enter = nenhuma)
 
@@ -510,6 +526,128 @@ echo false > "$TMP/ctl/gh_privado"
 codigo="$(assistente n -- --vps root@vps.exemplo --repo dono/repo --nome exemplo)"
 afirmar "--repo por argumento, público, recusando: também pergunta e sai com 1" \
   "$([ "$codigo" = 1 ] && saida_tem 'Continuar mesmo assim?' && ! instalou && ! gerou_token && echo 0 || echo 1)"
+
+# 27. menu: só aparece quando a VPS já tem instâncias (e nada de --nome/--repo/--org por argumento)
+novo_cenario
+codigo="$(assistente "${CONEXAO[@]}" dono/repo '' n s)"
+afirmar "sem instâncias: não há menu e a instalação segue" "$([ "$codigo" = 0 ] && instalou && ! saida_tem 'O que você quer fazer?' && echo 0 || echo 1)"
+afirmar "a VPS é consultada com --listar, sem nome, URL nem token" \
+  "$(houve 'bash -s -- --listar' && ! grep -qE 'RUNNER_(NOME|URL|TOKEN)' "$(ls "$TMP"/stdin.* | sort | head -n 1)"; echo $?)"
+novo_cenario
+printf 'alfa\nbeta\n' > "$TMP/ctl/instancias"
+codigo="$(assistente "${CONEXAO[@]}" 1 dono/repo '' n s)"
+afirmar "com instâncias: mostra o menu com as quatro opções e a lista" \
+  "$([ "$codigo" = 0 ] && saida_tem 'O que você quer fazer?' && saida_tem 'Instalar uma instância nova' && saida_tem 'Ver o estado' && saida_tem 'configuração' && saida_tem 'Remover' && saida_tem 'alfa, beta' && echo 0 || echo 1)"
+afirmar "escolher 1 segue o fluxo de instalação normal" "$(instalou && saida_tem 'Painel da VPS'; echo $?)"
+novo_cenario
+printf 'alfa\n' > "$TMP/ctl/instancias"
+codigo="$(assistente "${CONEXAO[@]}" x 0 5 '' 1 dono/repo '' n s)"
+afirmar "opção inválida repete e Enter assume 1 (instalar)" "$([ "$codigo" = 0 ] && instalou && echo 0 || echo 1)"
+novo_cenario
+printf 'alfa\n' > "$TMP/ctl/instancias"
+codigo="$(assistente n s -- --vps root@vps.exemplo --repo dono/repo --nome exemplo)"
+afirmar "com --nome/--repo por argumento o menu não aparece" "$([ "$codigo" = 0 ] && ! saida_tem 'O que você quer fazer?' && ! houve 'bash -s -- --listar' && echo 0 || echo 1)"
+novo_cenario
+printf 'alfa\n' > "$TMP/ctl/instancias"
+codigo="$(assistente "${CONEXAO[@]}")"
+afirmar "EOF no menu: sai com 1 sem instalar" "$([ "$codigo" = 1 ] && ! instalou && ! gerou_token && echo 0 || echo 1)"
+
+# 28. menu: ver o estado
+novo_cenario
+printf 'alfa\n' > "$TMP/ctl/instancias"
+codigo="$(assistente "${CONEXAO[@]}" 2)"
+afirmar "estado com uma só instância: usa ela sem perguntar, mostra o estado e sai com 0" \
+  "$([ "$codigo" = 0 ] && saida_tem 'ESTADO FALSO' && ! instalou && ! gerou_token && echo 0 || echo 1)"
+afirmar "o --status leva o RUNNER_NOME da instância e nenhum token" \
+  "$([ "$(envios_sem_token 'export RUNNER_NOME=alfa')" -eq 1 ] && echo 0 || echo 1)"
+novo_cenario
+printf 'alfa\nbeta\n' > "$TMP/ctl/instancias"
+codigo="$(assistente "${CONEXAO[@]}" 2 x 3 2)"
+afirmar "estado com duas instâncias: lista numerada, repete o inválido e escolhe pelo número" \
+  "$([ "$codigo" = 0 ] && saida_tem '1) alfa' && saida_tem '2) beta' && grep -l 'export RUNNER_NOME=beta' "$TMP"/stdin.* > /dev/null && echo 0 || echo 1)"
+
+# 29. menu: ver e alterar a configuração (sem token: reaplica com --sem-token)
+novo_cenario
+printf 'alfa\n' > "$TMP/ctl/instancias"
+codigo="$(assistente "${CONEXAO[@]}" 3 abc 0 3072 '' s)"
+afirmar "configurar: mostra a configuração gravada" \
+  "$([ "$codigo" = 0 ] && saida_tem 'MEMORY_MAX_MB=4096' && saida_tem 'CPU_QUOTA=200' && saida_tem 'RUNNER_URL=https://github.com/dono/repo' && echo 0 || echo 1)"
+afirmar "configurar: os valores atuais são o padrão (Enter mantém)" "$(saida_tem 'Memória máxima do runner em MB [4096]' && saida_tem 'Cota de CPU em % de um núcleo [200]'; echo $?)"
+afirmar "configurar: reaplica a instância sem token e sem gh" "$(instalou && ! gerou_token && ! gerou_token_de_remocao && echo 0 || echo 1)"
+afirmar "configurar: só o que mudou vai (MEMORY_MAX_MB=3072; CPU_QUOTA não) e nenhum envio leva token" \
+  "$([ "$(grep -l 'export MEMORY_MAX_MB=3072' "$TMP"/stdin.* | wc -l)" -eq 1 ] && ! grep -q CPU_QUOTA "$TMP"/stdin.* && ! grep -q RUNNER_TOKEN "$TMP"/stdin.* && echo 0 || echo 1)"
+afirmar "configurar: valores inválidos (abc, 0) não chegaram à VPS" "$(! grep -lE 'MEMORY_MAX_MB=(abc|0)$' "$TMP"/stdin.* > /dev/null 2>&1; echo $?)"
+afirmar "configurar: mostra o resumo, o estado depois e o comando equivalente" \
+  "$(saida_tem 'MEMORY_MAX_MB: 4096 -> 3072' && saida_tem 'ESTADO FALSO' && saida_tem '--sem-token' && saida_tem '--var MEMORY_MAX_MB=3072'; echo $?)"
+afirmar_sem "$TMP/out" "$TOKEN_FALSO"
+afirmar_sem "$TMP/err" "$TOKEN_FALSO"
+
+novo_cenario
+printf 'alfa\n' > "$TMP/ctl/instancias"
+codigo="$(assistente "${CONEXAO[@]}" 3 '' '')"
+afirmar "configurar sem mudar nada: 'Nada a alterar', sem reaplicar e sai com 0" "$([ "$codigo" = 0 ] && saida_tem 'Nada a alterar' && ! instalou && echo 0 || echo 1)"
+novo_cenario
+printf 'alfa\n' > "$TMP/ctl/instancias"
+codigo="$(assistente "${CONEXAO[@]}" 3 2048 300 n)"
+afirmar "configurar recusando a confirmação: nada é reaplicado (Enter/n = não)" "$([ "$codigo" = 0 ] && ! instalou && saida_tem 'Nada foi alterado' && echo 0 || echo 1)"
+novo_cenario
+printf 'alfa\n' > "$TMP/ctl/instancias"
+codigo="$(assistente "${CONEXAO[@]}" 3 2048 300 s)"
+afirmar "configurar memória e CPU: as duas vão" \
+  "$([ "$codigo" = 0 ] && grep -q 'export MEMORY_MAX_MB=2048' "$(grep -l MEMORY_MAX_MB "$TMP"/stdin.* | head -n 1)" && grep -q 'export CPU_QUOTA=300' "$(grep -l CPU_QUOTA "$TMP"/stdin.* | head -n 1)" && echo 0 || echo 1)"
+novo_cenario
+printf 'alfa\n' > "$TMP/ctl/instancias"
+echo 1 > "$TMP/ctl/instalar"
+codigo="$(assistente "${CONEXAO[@]}" 3 2048 '' s)"
+afirmar "reaplicação falhando: sai com 1 e avisa" "$([ "$codigo" = 1 ] && saida_tem 'falhou' && echo 0 || echo 1)"
+novo_cenario
+printf 'alfa\n' > "$TMP/ctl/instancias"
+codigo="$(assistente "${CONEXAO[@]}" 3 512 '' s)"
+afirmar "memória abaixo de 1024 MB: avisa do risco, mas aceita" "$([ "$codigo" = 0 ] && saida_tem 'abaixo de 1024 MB' && instalou && echo 0 || echo 1)"
+
+# 30. menu: remover uma instância (token de remoção só depois da confirmação)
+novo_cenario
+printf 'alfa\n' > "$TMP/ctl/instancias"
+codigo="$(assistente "${CONEXAO[@]}" 4 n)"
+afirmar "remover recusando (padrão não): sai com 0, sem token e sem remover" \
+  "$([ "$codigo" = 0 ] && ! gerou_token_de_remocao && ! houve 'bash -s -- --remover' && saida_tem 'Nada foi removido' && echo 0 || echo 1)"
+novo_cenario
+printf 'alfa\n' > "$TMP/ctl/instancias"
+codigo="$(assistente "${CONEXAO[@]}" 4 '')"
+afirmar "remover com Enter (padrão): não remove" "$([ "$codigo" = 0 ] && ! gerou_token_de_remocao && ! houve 'bash -s -- --remover' && echo 0 || echo 1)"
+novo_cenario
+printf 'alfa\n' > "$TMP/ctl/instancias"
+codigo="$(assistente "${CONEXAO[@]}" 4 s)"
+afirmar "remover confirmando: alvo vem da URL gravada, token de remoção e --remover" \
+  "$([ "$codigo" = 0 ] && houve 'repos/dono/repo/actions/runners/remove-token' && houve 'bash -s -- --remover' && echo 0 || echo 1)"
+afirmar "remover: o token vai pelo stdin do --remover e a saída o confirma" \
+  "$(grep -l 'export RUNNER_NOME=alfa' "$TMP"/stdin.* | xargs grep -l "export RUNNER_TOKEN=$TOKEN_FALSO" | wc -l | grep -qx 1 && saida_tem 'REMOVIDO'; echo $?)"
+afirmar "remover: o token de remoção só é gerado depois da confirmação" \
+  "$([ "$(linha_de remove-token)" -gt "$(linha_de 'bash -s -- --config')" ] && echo 0 || echo 1)"
+afirmar_sem "$TMP/out" "$TOKEN_FALSO"
+afirmar_sem "$TMP/err" "$TOKEN_FALSO"
+afirmar_sem "$TMP/chamadas.log" "$TOKEN_FALSO"
+afirmar "remover não instala nem gera token de registro" "$(! gerou_token && ! instalou && echo 0 || echo 1)"
+novo_cenario
+printf 'alfa\n' > "$TMP/ctl/instancias"
+printf 'RUNNER_URL=https://github.com/minha-org\nMEMORY_MAX_MB=1\nCPU_QUOTA=1\n' > "$TMP/ctl/config"
+codigo="$(assistente "${CONEXAO[@]}" 4 s)"
+afirmar "remover instância de organização: usa orgs/<org>" "$([ "$codigo" = 0 ] && houve 'orgs/minha-org/actions/runners/remove-token' && echo 0 || echo 1)"
+novo_cenario
+printf 'alfa\n' > "$TMP/ctl/instancias"
+printf 'RUNNER_URL=\nMEMORY_MAX_MB=1\n' > "$TMP/ctl/config"
+codigo="$(assistente "${CONEXAO[@]}" 4 s)"
+afirmar "remover sem URL gravada: erro (saída 1), sem token e sem remover" "$([ "$codigo" = 1 ] && ! gerou_token_de_remocao && ! houve 'bash -s -- --remover' && echo 0 || echo 1)"
+novo_cenario
+printf 'alfa\n' > "$TMP/ctl/instancias"
+echo false > "$TMP/ctl/gh_admin"
+codigo="$(assistente "${CONEXAO[@]}" 4 s)"
+afirmar "remover sem ser administrador: recusa antes do token e da remoção" "$([ "$codigo" = 1 ] && ! gerou_token_de_remocao && ! houve 'bash -s -- --remover' && echo 0 || echo 1)"
+novo_cenario
+printf 'alfa\n' > "$TMP/ctl/instancias"
+echo 1 > "$TMP/ctl/remover"
+codigo="$(assistente "${CONEXAO[@]}" 4 s)"
+afirmar "remoção falhando: sai com 1" "$([ "$codigo" = 1 ] && echo 0 || echo 1)"
 
 # 13. o script não lê o token do teclado e o assistente não grava nada em disco
 afirmar "registrar.sh não lê o token do teclado" "$(! grep -nE 'read .*(token|TOKEN)' "$script"; echo $?)"

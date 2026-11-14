@@ -4,9 +4,11 @@
 # As variáveis vêm do ambiente; o stdin não é lido. RUNNER_TOKEN nunca é impresso, gravado nem passado na
 # linha de comando: vai ao config.sh pela variável ACTIONS_RUNNER_INPUT_TOKEN, só durante a chamada.
 #
-# Uso: instalar.sh [--so-checar | --status | --remover]
-#   --so-checar mostra o painel de decisão (somente leitura) e termina com o veredito. É o único modo que
-#   aceita ficar sem RUNNER_NOME: então mostra só o servidor (sem a seção da instância).
+# Uso: instalar.sh [--so-checar | --listar | --config | --status | --remover]
+#   --so-checar mostra o painel de decisão (somente leitura) e termina com o veredito. Sem RUNNER_NOME,
+#   mostra só o servidor (sem a seção da instância).
+#   --listar imprime os nomes das instâncias desta VPS, um por linha (somente leitura; dispensa RUNNER_NOME).
+#   --config imprime a configuração gravada da instância, CHAVE=valor (somente leitura; nunca há token nela).
 set -euo pipefail
 
 passo() { printf '==> %s\n' "$*"; }
@@ -14,7 +16,7 @@ aviso() { printf 'AVISO: %s\n' "$*" >&2; }
 erro() { printf 'ERRO: %s\n' "$*" >&2; }
 uso() {
   cat >&2 <<'USO'
-Uso: instalar.sh [--so-checar | --status | --remover]
+Uso: instalar.sh [--so-checar | --listar | --config | --status | --remover]
 Variáveis: RUNNER_NOME (obrigatória, [a-z0-9-]+); RUNNER_URL (no primeiro instalar); RUNNER_TOKEN (registro e --remover);
 opcionais: RUNNER_NOME_GITHUB, RUNNER_ROTULOS, RUNNER_VERSAO, RUNNER_SHA256, DOCKER_ROOTLESS, RESERVA_MB, MEM_MIN_MB,
 DISCO_MIN_GB, MEMORY_MAX_MB, CPU_QUOTA, HOSTS_EXTRAS, PACOTES_EXTRAS, EXTRAS_SH, EXTRAS_SHA256, ENV_EXTRAS.
@@ -38,16 +40,16 @@ CHAVES=(RUNNER_URL RUNNER_NOME_GITHUB RUNNER_ROTULOS DOCKER_ROOTLESS RESERVA_MB 
 SUB="${1:-}"
 if [ "$#" -gt 1 ]; then uso; exit 2; fi
 case "$SUB" in
-  "" | --so-checar | --status | --remover) ;;
+  "" | --so-checar | --listar | --config | --status | --remover) ;;
   *) erro "argumento desconhecido: $SUB"; uso; exit 2 ;;
 esac
 
 RUNNER_NOME="${RUNNER_NOME:-}"
-# O painel (--so-checar) pode rodar só para o servidor, sem nome de instância (o assistente o usa antes de
-# perguntar o repositório); todo o resto exige RUNNER_NOME.
-SO_SERVIDOR=0
-if [ -z "$RUNNER_NOME" ] && [ "$SUB" = --so-checar ]; then SO_SERVIDOR=1; fi
-if [ -z "$RUNNER_NOME" ] && [ "$SO_SERVIDOR" -eq 0 ]; then erro "RUNNER_NOME é obrigatório."; uso; exit 2; fi
+# O painel (--so-checar) e a lista (--listar) funcionam só para o servidor, sem nome de instância (o assistente
+# os usa antes de perguntar qualquer coisa sobre a instância); todo o resto exige RUNNER_NOME.
+SEM_NOME=0
+if [ -z "$RUNNER_NOME" ] && { [ "$SUB" = --so-checar ] || [ "$SUB" = --listar ]; }; then SEM_NOME=1; fi
+if [ -z "$RUNNER_NOME" ] && [ "$SEM_NOME" -eq 0 ]; then erro "RUNNER_NOME é obrigatório."; uso; exit 2; fi
 if [ -n "$RUNNER_NOME" ] && ! [[ "$RUNNER_NOME" =~ ^[a-z0-9-]+$ ]]; then
   erro "RUNNER_NOME inválido: use só letras minúsculas, números e hífen."; exit 2
 fi
@@ -323,7 +325,7 @@ painel() {
   if [ "$quantas" -eq 0 ]; then printf 'nenhuma instância instalada ainda\n'
   else printf 'memória reservada pelas instâncias: %s MB\n' "$total"; fi
 
-  if [ "$SO_SERVIDOR" -eq 0 ]; then
+  if [ "$SEM_NOME" -eq 0 ]; then
     printf '\n== Esta instância (%s) ==\n' "$RUNNER_NOME"
     if [ -f "$CONF" ]; then IFS='|' read -r url_conf _ _ <<< "$(campos_da_instancia "$CONF")"; fi
     if UID_INST="$(uid_do_usuario)"; then
@@ -674,6 +676,20 @@ executar_extras() {
 }
 
 # ---------- estado ----------
+# Os nomes das instâncias desta VPS (um por linha, em ordem), a partir de /etc/runner-vps/*.conf.
+listar_instancias() {
+  local f
+  for f in "$RAIZ"/etc/runner-vps/*.conf; do
+    [ -e "$f" ] || continue
+    basename "$f" .conf
+  done | sort
+}
+# A configuração gravada da instância como CHAVE=valor (valor cru, sem escapes). Somente leitura.
+mostrar_config() {
+  if [ ! -f "$CONF" ]; then erro "a instância $RUNNER_NOME não existe nesta VPS."; return 1; fi
+  # shellcheck disable=SC1090
+  ( . "$CONF"; for k in "${CHAVES[@]}"; do printf '%s=%s\n' "$k" "${!k:-}"; done )
+}
 mostrar_estado() {
   local estado quer limites log
   passo "estado da instância $RUNNER_NOME"
@@ -781,6 +797,10 @@ case "$SUB" in
     remover_instancia ;;
   --so-checar)
     painel ;;
+  --listar)
+    listar_instancias ;;
+  --config)
+    mostrar_config ;;
   "")
     if [ -z "$RUNNER_URL" ]; then erro "RUNNER_URL é obrigatório no primeiro instalar."; exit 2; fi
     if ! [[ "$RUNNER_URL" =~ ^https:// ]]; then erro "RUNNER_URL deve começar com https://."; exit 2; fi
