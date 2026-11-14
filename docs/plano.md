@@ -159,16 +159,16 @@ Modificar: `README.md` (Task 5).
 
 **Files:** modificar `registrar.sh`, `testes/test_assistente.sh`, `README.md`.
 **Regras:** design 4.6 (assistente interativo, item 1). `SSH_CONFIG_FILE` é a variável só de teste (padrão `$HOME/.ssh/config`); os testes nunca leem o config real.
-- [ ] Testes primeiro:
+- [x] Testes primeiro:
   1. config com Hosts concretos: a pergunta "como conectar" aparece, Enter escolhe "Host salvo", a lista é numerada e mostra `usuário@hostname:porta` de cada um (via `ssh -G` falso); escolher um número usa aquele alias, sem perguntar porta, usuário nem chave, sem `TCP_CMD`; o `ssh` e o comando equivalente usam o alias;
   2. a lista ignora curingas (`*`, `?`, `!`), comentários e `Match`, junta vários nomes de uma mesma linha `Host`, não repete nomes e aceita `Host` em qualquer caixa;
   3. número inválido (`0`, acima do total, texto, vazio) repete só a escolha;
   4. escolher "IP ou nome" segue o fluxo de host, porta, SSH, usuário e chave;
   5. sem `~/.ssh/config`, ou só com `Host *`: a pergunta não aparece e o fluxo vai direto ao IP;
   6. `--vps` por argumento pula a pergunta mesmo com Hosts no config; resposta inválida à pergunta repete.
-- [ ] Implementar no `registrar.sh`.
-- [ ] README: assistente (primeira pergunta).
-- [ ] Commit: `feat: assistente começa perguntando se usa um Host do ~/.ssh/config ou um IP`.
+- [x] Implementar no `registrar.sh`.
+- [x] README: assistente (primeira pergunta).
+- [x] Commit: `feat: assistente começa perguntando se usa um Host do ~/.ssh/config ou um IP`.
 
 ## Fecho
 
