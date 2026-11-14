@@ -360,10 +360,11 @@ assistente() {
   [ "$sem_docker" -eq 0 ] || base+=(--sem-docker)
   for v in "${extras[@]}"; do base+=(--var "$v"); done
 
-  # 5. Diagnóstico: se não couber, para antes de gerar qualquer token.
-  printf '\nDiagnóstico da VPS (não cria nada):\n'
-  if ! bash "$self" "${base[@]}" --so-checar < /dev/null; then
-    erro "o diagnóstico disse que não cabe (ou falhou); nada foi instalado." 1
+  # 5. Painel de decisão (somente leitura): sistema, Docker, instâncias, estado desta instância, avisos e
+  # veredito. Leva a URL do alvo para apontar divergências. Se não couber, para antes de gerar qualquer token.
+  printf '\nPainel da VPS (somente leitura, não cria nada):\n\n'
+  if ! bash "$self" "${base[@]}" "${alvo[@]}" --so-checar < /dev/null; then
+    erro "o veredito é \"não cabe\" (ou o painel falhou); nada foi instalado." 1
   fi
 
   # 6. Resumo e confirmação.

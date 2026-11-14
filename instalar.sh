@@ -5,6 +5,7 @@
 # linha de comando: vai ao config.sh pela variável ACTIONS_RUNNER_INPUT_TOKEN, só durante a chamada.
 #
 # Uso: instalar.sh [--so-checar | --status | --remover]
+#   --so-checar mostra o painel de decisão (somente leitura) e termina com o veredito.
 set -euo pipefail
 
 passo() { printf '==> %s\n' "$*"; }
@@ -173,6 +174,13 @@ gravar_configuracao() {
 }
 
 # ---------- diagnóstico ----------
+tem_systemd() { [ -d "$RAIZ/run/systemd/system" ]; }
+tem_apt() { command -v "$APT" > /dev/null 2>&1; }
+# max_user_namespaces do kernel: imprime o número, ou nada se o sistema não informa.
+valor_userns() {
+  local f="${USERNS_FILE:-/proc/sys/user/max_user_namespaces}"
+  if [ -r "$f" ]; then tr -dc '0-9' < "$f"; fi
+}
 # Define MEM_EFETIVO_MB e CPU_EFETIVO; imprime os números e o VEREDITO. Devolve 0 (cabe) ou 1 (não cabe).
 diagnostico() {
   local meminfo="${MEMINFO_FILE:-/proc/meminfo}" mem_total_mb mem_disp_mb cpus disco_gb caminho f v calculado q
@@ -208,6 +216,10 @@ diagnostico() {
   if [ "$MEM_EFETIVO_MB" -lt "$MEM_MIN_MB" ]; then motivos+=("memória (mínimo $MEM_MIN_MB)"); fi
   if [ "$CPU_EFETIVO" -lt 100 ]; then motivos+=("cpu (mínimo 100)"); fi
   if [ "$disco_gb" -lt "$DISCO_MIN_GB" ]; then motivos+=("disco (mínimo $DISCO_MIN_GB GB)"); fi
+  # Só bloqueiam quando o problema é detectado de forma positiva (dado ausente = desconhecido, não bloqueia).
+  if ! tem_systemd; then motivos+=("systemd ausente"); fi
+  if ! tem_apt; then motivos+=("apt-get ausente"); fi
+  if [ "$DOCKER_ROOTLESS" = 1 ] && [ "$(valor_userns)" = 0 ]; then motivos+=("user namespaces desligados (o rootless exige)"); fi
 
   if [ "${#motivos[@]}" -gt 0 ]; then
     local IFS=';'
@@ -215,6 +227,121 @@ diagnostico() {
     return 1
   fi
   printf 'VEREDITO: cabe (MemoryMax=%sM CPUQuota=%s%%)\n' "$MEM_EFETIVO_MB" "$CPU_EFETIVO"
+}
+
+# ---------- painel de decisão (somente leitura) ----------
+# Estado do serviço runner-vps de uma instância: "active", "inactive"… ou "sem usuário".
+estado_do_servico() { # <nome da instância>
+  local usuario="runner-$1" estado
+  if ! "${ID_CMD:-id}" -u "$usuario" > /dev/null 2>&1; then printf 'sem usuário'; return 0; fi
+  estado="$("$SYSTEMCTL" --user -M "$usuario@" is-active runner-vps 2> /dev/null || true)"
+  printf '%s' "${estado:-desconhecido}"
+}
+
+# Lê RUNNER_URL, MEMORY_MAX_MB e CPU_QUOTA de um .conf sem contaminar o ambiente: "url|mem|cpu".
+campos_da_instancia() { # <arquivo .conf>
+  # shellcheck disable=SC1090
+  ( . "$1"; printf '%s|%s|%s' "${RUNNER_URL:-}" "${MEMORY_MAX_MB:-}" "${CPU_QUOTA:-}" )
+}
+
+# Tudo o que a pessoa precisa para decidir se instala: sistema, Docker rootless, instâncias, estado desta
+# instância, avisos e, por último, os recursos e o veredito. Não cria, não grava e não reinicia nada.
+painel() {
+  local os_release="${OS_RELEASE_FILE:-/etc/os-release}" meminfo="${MEMINFO_FILE:-/proc/meminfo}"
+  local sistema arq kernel carga userns restricao f n url mem cpu estado mem_txt cpu_txt marca url_conf="" total=0 quantas=0 swap_mb
+  local -a avisos=()
+
+  printf '== Sistema ==\n'
+  sistema="desconhecido"
+  if [ -f "$os_release" ]; then
+    # shellcheck disable=SC1090
+    sistema="$(. "$os_release"; printf '%s' "${PRETTY_NAME:-${ID:-desconhecido} ${VERSION_CODENAME:-}}")"
+  fi
+  arq="$("${UNAME_CMD:-uname}" -m 2> /dev/null || printf desconhecida)"
+  kernel="$("${UNAME_CMD:-uname}" -r 2> /dev/null || printf desconhecido)"
+  carga="desconhecida"
+  if [ -r "${LOADAVG_FILE:-/proc/loadavg}" ]; then carga="$(awk '{ print $1, $2, $3 }' "${LOADAVG_FILE:-/proc/loadavg}")"; fi
+  printf 'sistema: %s\narquitetura: %s\nkernel: %s\n' "$sistema" "$arq" "$kernel"
+  if tem_systemd; then printf 'systemd: sim\n'; else printf 'systemd: NÃO (ausente)\n'; fi
+  if tem_apt; then printf 'apt-get: sim\n'; else printf 'apt-get: NÃO (ausente)\n'; fi
+  printf 'carga (1, 5, 15 min): %s\n' "$carga"
+
+  printf '\n== Docker rootless ==\n'
+  if [ "$DOCKER_ROOTLESS" = 1 ]; then
+    printf 'Docker rootless: ligado (DOCKER_ROOTLESS=1)\n'
+    if command -v "${DOCKER_CMD:-docker}" > /dev/null 2>&1; then printf 'docker: instalado\n'
+    else printf 'docker: não instalado (o instalador instala do repositório oficial)\n'; fi
+    if grep -rqs 'download.docker.com' "$RAIZ/etc/apt/sources.list" "$RAIZ/etc/apt/sources.list.d" 2> /dev/null; then
+      printf 'repositório apt do Docker: configurado\n'
+    else
+      printf 'repositório apt do Docker: não configurado (o instalador configura, com a chave fixada)\n'
+    fi
+    userns="$(valor_userns)"
+    if [ -z "$userns" ]; then printf 'user namespaces: desconhecido\n'
+    elif [ "$userns" = 0 ]; then printf 'user namespaces: DESLIGADOS (max_user_namespaces=0)\n'
+    else printf 'user namespaces: ok (max_user_namespaces=%s)\n' "$userns"; fi
+    if command -v "${NEWUIDMAP_CMD:-newuidmap}" > /dev/null 2>&1; then printf 'uidmap (newuidmap): presente\n'
+    else printf 'uidmap (newuidmap): ausente (o instalador instala)\n'; fi
+    restricao=""
+    if [ -r "${APPARMOR_USERNS_FILE:-/proc/sys/kernel/apparmor_restrict_unprivileged_userns}" ]; then
+      restricao="$(tr -dc '0-9' < "${APPARMOR_USERNS_FILE:-/proc/sys/kernel/apparmor_restrict_unprivileged_userns}")"
+    fi
+    if [ "$restricao" = 1 ]; then
+      avisos+=("o AppArmor restringe user namespaces (apparmor_restrict_unprivileged_userns=1): o rootless pode exigir um perfil; se o check do rootless falhar, o instalador para com o motivo")
+    fi
+  else
+    printf 'Docker rootless: desligado (DOCKER_ROOTLESS=0)\n'
+  fi
+
+  printf '\n== Instâncias nesta VPS ==\n'
+  for f in "$RAIZ"/etc/runner-vps/*.conf; do
+    [ -e "$f" ] || continue
+    n="$(basename "$f" .conf)"
+    IFS='|' read -r url mem cpu <<< "$(campos_da_instancia "$f")"
+    estado="$(estado_do_servico "$n")"
+    mem_txt="(a calcular na instalação)"; if [ -n "$mem" ]; then mem_txt="${mem}M"; fi
+    cpu_txt="(a calcular na instalação)"; if [ -n "$cpu" ]; then cpu_txt="${cpu}%"; fi
+    marca=""; if [ "$f" = "$CONF" ]; then marca=" (esta)"; fi
+    printf '%s%s: %s; MemoryMax=%s; CPUQuota=%s; serviço: %s\n' "$n" "$marca" "${url:-sem URL}" "$mem_txt" "$cpu_txt" "$estado"
+    if [[ "$mem" =~ ^[0-9]+$ ]]; then total=$((total + mem)); fi
+    quantas=$((quantas + 1))
+  done
+  if [ "$quantas" -eq 0 ]; then printf 'nenhuma instância instalada ainda\n'
+  else printf 'memória reservada pelas instâncias: %s MB\n' "$total"; fi
+
+  printf '\n== Esta instância (%s) ==\n' "$RUNNER_NOME"
+  if [ -f "$CONF" ]; then IFS='|' read -r url_conf _ _ <<< "$(campos_da_instancia "$CONF")"; fi
+  if UID_INST="$(uid_do_usuario)"; then
+    if [ -f "$CONF" ]; then
+      printf 'situação: já instalada (rodar de novo reaplica a configuração; nada muda nem reinicia se nada mudou)\n'
+    else
+      printf 'situação: incompleta (o usuário existe, mas falta a configuração em /etc/runner-vps)\n'
+    fi
+    printf 'usuário: %s (uid %s)\n' "$USUARIO" "$UID_INST"
+    printf 'serviço runner-vps: %s\n' "$(estado_do_servico "$RUNNER_NOME")"
+    if [ -e "$HOME_FS/runner/.runner" ]; then printf 'registro no GitHub: .runner presente\n'
+    else printf 'registro no GitHub: .runner ausente\n'; fi
+  else
+    if [ -f "$CONF" ]; then
+      printf 'situação: incompleta (a configuração existe, mas falta o usuário %s)\n' "$USUARIO"
+    else
+      printf 'situação: instalação nova (nada instalado ainda)\n'
+    fi
+    printf 'usuário: %s (ausente)\n' "$USUARIO"
+  fi
+  if [ -n "$url_conf" ]; then printf 'URL configurada: %s\n' "$url_conf"; fi
+  if [ -n "$url_conf" ] && [ -n "$RUNNER_URL" ] && [ "$url_conf" != "$RUNNER_URL" ]; then
+    avisos+=("a instância já está configurada para $url_conf, mas a URL informada é $RUNNER_URL")
+  fi
+
+  printf '\n== Avisos ==\n'
+  if [ "${#avisos[@]}" -eq 0 ]; then printf 'nenhum aviso\n'
+  else for n in "${avisos[@]}"; do printf -- '- %s\n' "$n"; done; fi
+
+  printf '\n== Recursos e veredito ==\n'
+  swap_mb="$(awk '/^SwapTotal:/ { print int($2 / 1024) }' "$meminfo" 2> /dev/null || true)"
+  printf 'swap: %s MB\n' "${swap_mb:-0}"
+  diagnostico
 }
 
 # ---------- usuário ----------
@@ -637,7 +764,7 @@ case "$SUB" in
   --remover)
     remover_instancia ;;
   --so-checar)
-    diagnostico ;;
+    painel ;;
   "")
     if [ -z "$RUNNER_URL" ]; then erro "RUNNER_URL é obrigatório no primeiro instalar."; exit 2; fi
     if ! [[ "$RUNNER_URL" =~ ^https:// ]]; then erro "RUNNER_URL deve começar com https://."; exit 2; fi

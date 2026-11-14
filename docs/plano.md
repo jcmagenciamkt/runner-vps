@@ -174,7 +174,7 @@ Modificar: `README.md` (Task 5).
 
 **Files:** modificar `instalar.sh`, `registrar.sh`, `testes/vps-falsa.sh`, `testes/test_assistente.sh`, `README.md`; criar `testes/test_painel.sh`.
 **Regras:** design 4.4 (diagnóstico e painel). Somente leitura. Variáveis só de teste novas: `UNAME_CMD`, `LOADAVG_FILE`, `USERNS_FILE`, `APPARMOR_USERNS_FILE`.
-- [ ] Testes primeiro (`testes/test_painel.sh`, VPS falsa):
+- [x] Testes primeiro (`testes/test_painel.sh`, VPS falsa):
   1. VPS nova: as seções Sistema, Docker rootless, Instâncias nesta VPS, Esta instância, Avisos e Recursos e veredito aparecem, nessa ordem, com distribuição, arquitetura, kernel, systemd, apt, carga, memória, swap, CPUs e disco; "instalação nova"; `VEREDITO: cabe` por último; saída 0;
   2. somente leitura: o `snapshot` de `RAIZ` não muda, nenhum comando com efeito é chamado (só `systemctl is-active`), e o `RUNNER_TOKEN` do ambiente não aparece na saída nem no erro;
   3. instância já instalada: "já instalada", usuário com uid, serviço, `.runner` presente, URL configurada; com duas instâncias, ambas listadas com `MemoryMax`, `CPUQuota` e serviço, a atual marcada "(esta)" e o total reservado;
@@ -182,10 +182,10 @@ Modificar: `README.md` (Task 5).
   5. "não cabe" mostra o painel completo e sai com 1: memória, systemd ausente, `apt-get` ausente, user namespaces desligados com rootless; user namespaces desligados com `DOCKER_ROOTLESS=0` e `max_user_namespaces` ausente: cabe;
   6. avisos: URL configurada diferente da informada; AppArmor restringindo user namespaces com rootless ligado; sem divergência e sem restrição: "nenhum";
   7. a instalação também recusa quando o veredito é "não cabe" por um dos motivos novos, sem criar nada.
-- [ ] Testes do assistente: o `--so-checar` chamado pelo assistente leva `RUNNER_URL` do alvo e nunca `RUNNER_TOKEN`; o título é "Painel da VPS"; "não cabe" ainda para antes de gerar token.
-- [ ] Implementar `painel()` no `instalar.sh` e os novos motivos no `diagnostico()`; o assistente passa o alvo ao `--so-checar`.
-- [ ] README: painel.
-- [ ] Commit: `feat: --so-checar vira painel de decisão (sistema, Docker, instâncias, estado, avisos) e o assistente o mostra antes de confirmar`.
+- [x] Testes do assistente: o `--so-checar` chamado pelo assistente leva `RUNNER_URL` do alvo e nunca `RUNNER_TOKEN`; o título é "Painel da VPS"; "não cabe" ainda para antes de gerar token.
+- [x] Implementar `painel()` no `instalar.sh` e os novos motivos no `diagnostico()`; o assistente passa o alvo ao `--so-checar`.
+- [x] README: painel.
+- [x] Commit: `feat: --so-checar vira painel de decisão (sistema, Docker, instâncias, estado, avisos) e o assistente o mostra antes de confirmar`.
 
 ## Fecho
 
