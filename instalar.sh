@@ -19,7 +19,8 @@ uso() {
 Uso: instalar.sh [--so-checar | --listar | --config | --status | --remover]
 Variáveis: RUNNER_NOME (obrigatória, [a-z0-9-]+); RUNNER_URL (no primeiro instalar); RUNNER_TOKEN (registro e --remover);
 opcionais: RUNNER_NOME_GITHUB, RUNNER_ROTULOS, RUNNER_VERSAO, RUNNER_SHA256, DOCKER_ROOTLESS, RESERVA_MB, MEM_MIN_MB,
-DISCO_MIN_GB, MEMORY_MAX_MB, CPU_QUOTA, HOSTS_EXTRAS, PACOTES_EXTRAS, EXTRAS_SH, EXTRAS_SHA256, ENV_EXTRAS.
+DISCO_MIN_GB, MEMORY_MAX_MB, CPU_QUOTA, HOSTS_EXTRAS, PACOTES_EXTRAS, EXTRAS_SH, EXTRAS_SHA256, ENV_EXTRAS,
+JANELA (HH:MM-HH:MM, horário da VPS), VALIDADE (AAAA-MM-DD), JANELA_ESPERA_MIN (padrão 120).
 USO
 }
 
@@ -34,7 +35,7 @@ RUNNER_SHA256_ARM64="670adb2f268fe21dcbb58b3db0e0aa9d5b3bddfe2c651481336e561ff86
 
 # Variáveis que a instância persiste em /etc/runner-vps/<nome>.conf (nunca o token).
 CHAVES=(RUNNER_URL RUNNER_NOME_GITHUB RUNNER_ROTULOS DOCKER_ROOTLESS RESERVA_MB MEM_MIN_MB DISCO_MIN_GB
-  MEMORY_MAX_MB CPU_QUOTA HOSTS_EXTRAS PACOTES_EXTRAS EXTRAS_SH EXTRAS_SHA256 ENV_EXTRAS)
+  MEMORY_MAX_MB CPU_QUOTA HOSTS_EXTRAS PACOTES_EXTRAS EXTRAS_SH EXTRAS_SHA256 ENV_EXTRAS JANELA VALIDADE JANELA_ESPERA_MIN)
 
 # ---------- argumentos e identidade ----------
 SUB="${1:-}"
@@ -138,6 +139,9 @@ carregar_configuracao() {
   EXTRAS_SH="${EXTRAS_SH:-}"
   EXTRAS_SHA256="${EXTRAS_SHA256:-}"
   ENV_EXTRAS="${ENV_EXTRAS:-}"
+  JANELA="${JANELA:-}"
+  VALIDADE="${VALIDADE:-}"
+  JANELA_ESPERA_MIN="${JANELA_ESPERA_MIN:-120}"
   CPU_QUOTA="${CPU_QUOTA%\%}"
   RUNNER_VERSAO="${RUNNER_VERSAO:-}"
   RUNNER_SHA256="${RUNNER_SHA256:-}"
@@ -151,6 +155,18 @@ validar_configuracao() {
   for k in MEMORY_MAX_MB CPU_QUOTA; do
     if [ -n "${!k}" ] && ! [[ "${!k}" =~ ^[0-9]+$ ]]; then erro "$k deve ser um número inteiro."; exit 2; fi
   done
+  if ! [[ "$JANELA_ESPERA_MIN" =~ ^[0-9]+$ ]]; then erro "JANELA_ESPERA_MIN deve ser um número inteiro (minutos)."; exit 2; fi
+  if [ -n "$JANELA" ]; then
+    local hh='([01][0-9]|2[0-3]):[0-5][0-9]'
+    if ! [[ "$JANELA" =~ ^$hh-$hh$ ]] || [ "${JANELA%-*}" = "${JANELA#*-}" ]; then
+      erro "JANELA deve ser HH:MM-HH:MM (24 h, horário da VPS), com início diferente do fim: $JANELA"; exit 2
+    fi
+  fi
+  if [ -n "$VALIDADE" ]; then
+    if ! [[ "$VALIDADE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || [ "$(date -d "$VALIDADE" +%F 2> /dev/null || true)" != "$VALIDADE" ]; then
+      erro "VALIDADE deve ser uma data AAAA-MM-DD válida: $VALIDADE"; exit 2
+    fi
+  fi
   if [ "$DOCKER_ROOTLESS" != 0 ] && [ "$DOCKER_ROOTLESS" != 1 ]; then erro "DOCKER_ROOTLESS deve ser 0 ou 1."; exit 2; fi
   if ! [[ "$PACOTES_EXTRAS" =~ ^[A-Za-z0-9.+:_\ -]*$ ]]; then erro "PACOTES_EXTRAS: só nomes de pacotes separados por espaço."; exit 2; fi
   if [[ "$HOSTS_EXTRAS" == *$'\n'* ]]; then erro "HOSTS_EXTRAS deve ser uma linha só."; exit 2; fi
@@ -645,10 +661,186 @@ atualizar_hosts() {
   rm -f "$tmp"
 }
 
+# ---------- janela de horário e validade ----------
+# Um script de ciclo (root, em /etc/runner-vps, nunca dentro do HOME do runner, que o próprio usuário edita) e
+# timers do systemd (do sistema) controlam o serviço do usuário: "ajustar" liga dentro da janela e desliga fora
+# (esperando o job terminar); "expirar" desliga e desabilita de vez na VALIDADE.
+CICLO_FS="$RAIZ/etc/runner-vps/ciclo-$RUNNER_NOME.sh"
+CICLO_REAL="/etc/runner-vps/ciclo-$RUNNER_NOME.sh"
+MARCA_EXPIRADA="$RAIZ/etc/runner-vps/$RUNNER_NOME.expirada"
+UNIDADES_FS="$RAIZ/etc/systemd/system"
+hoje_vps() { printf '%s' "${CICLO_HOJE:-$(date +%F)}"; }
+
+conteudo_ciclo() {
+  cat <<CICLO
+#!/usr/bin/env bash
+# runner-vps: janela de horário e validade da instância $RUNNER_NOME (gerado pelo instalar.sh; não edite)
+set -u
+export LC_ALL=C
+nome=$RUNNER_NOME
+usuario=runner-$RUNNER_NOME
+janela_ini=${JANELA%-*}
+janela_fim=${JANELA#*-}
+validade=$VALIDADE
+espera_max=$((JANELA_ESPERA_MIN * 60))
+CICLO
+  cat <<'CICLO'
+raiz="${RAIZ:-}"
+sistema="${SYSTEMCTL_CMD:-systemctl}"; pgrep_cmd="${PGREP_CMD:-pgrep}"; dorme="${SLEEP_CMD:-sleep}"
+agora="${CICLO_AGORA:-$(date +%H:%M)}"; hoje="${CICLO_HOJE:-$(date +%F)}"
+marca="$raiz/etc/runner-vps/$nome.expirada"
+
+do_usuario() { "$sistema" --user -M "$usuario@" "$@"; }
+ocupado() { "$pgrep_cmd" -u "$usuario" -f Runner.Worker > /dev/null 2>&1; }
+esperar_ocioso() {
+  local t=0
+  while ocupado && [ "$t" -lt "$espera_max" ]; do "$dorme" 30; t=$((t + 30)); done
+}
+dentro_da_janela() {
+  [ -n "$janela_ini" ] || return 0
+  if [[ "$janela_ini" < "$janela_fim" ]]; then
+    [[ ! "$agora" < "$janela_ini" && "$agora" < "$janela_fim" ]]
+  else
+    [[ ! "$agora" < "$janela_ini" || "$agora" < "$janela_fim" ]]
+  fi
+}
+expirar() {
+  esperar_ocioso
+  do_usuario stop runner-vps || true
+  do_usuario disable runner-vps || true
+  "$sistema" disable --now "runner-vps-$nome-janela.timer" || true
+  "$sistema" disable --now "runner-vps-$nome-validade.timer" || true
+  printf 'expirou_em=%s\nvalidade=%s\n' "$hoje" "$validade" > "$marca"
+}
+case "${1:-}" in
+  ajustar)
+    [ ! -e "$marca" ] || exit 0
+    if [ -n "$validade" ] && [[ "$hoje" > "$validade" ]]; then expirar; exit 0; fi
+    if dentro_da_janela; then do_usuario start runner-vps; else esperar_ocioso; do_usuario stop runner-vps; fi ;;
+  expirar)
+    [ ! -e "$marca" ] || exit 0
+    expirar ;;
+  *) echo "uso: $0 ajustar|expirar" >&2; exit 2 ;;
+esac
+CICLO
+}
+conteudo_ciclo_servico() { # <ajustar|expirar> <descrição>
+  cat <<UNIDADE
+[Unit]
+Description=$2 (runner-vps, instância $RUNNER_NOME)
+
+[Service]
+Type=oneshot
+ExecStart=$CICLO_REAL $1
+TimeoutStartSec=$((JANELA_ESPERA_MIN * 60 + 300))
+UNIDADE
+}
+conteudo_timer_janela() {
+  cat <<UNIDADE
+[Unit]
+Description=Janela de horário do runner-vps (instância $RUNNER_NOME)
+
+[Timer]
+OnCalendar=*-*-* ${JANELA%-*}:00
+OnCalendar=*-*-* ${JANELA#*-}:00
+OnBootSec=1min
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target
+UNIDADE
+}
+conteudo_timer_validade() {
+  cat <<UNIDADE
+[Unit]
+Description=Validade do runner-vps (instância $RUNNER_NOME)
+
+[Timer]
+OnCalendar=$VALIDADE 23:59:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+UNIDADE
+}
+
+# Desliga e apaga os timers, o script e a marca do ciclo desta instância (para tudo o que existir).
+limpar_ciclo() {
+  local t ext houve=0
+  for t in janela validade; do
+    if [ -e "$UNIDADES_FS/runner-vps-$RUNNER_NOME-$t.timer" ]; then
+      "$SYSTEMCTL" disable --now "runner-vps-$RUNNER_NOME-$t.timer" || aviso "não foi possível desabilitar o timer de $t."
+    fi
+    for ext in timer service; do
+      if [ -e "$UNIDADES_FS/runner-vps-$RUNNER_NOME-$t.$ext" ]; then rm -f "$UNIDADES_FS/runner-vps-$RUNNER_NOME-$t.$ext"; houve=1; fi
+    done
+  done
+  if [ -e "$CICLO_FS" ] || [ -e "$MARCA_EXPIRADA" ]; then houve=1; fi
+  rm -f "$CICLO_FS" "$MARCA_EXPIRADA"
+  if [ "$houve" = 1 ]; then "$SYSTEMCTL" daemon-reload; fi
+}
+
+# Cuida de um timer (janela ou validade): grava as unidades se o texto mudou, ou apaga se não for mais usado.
+# Define CICLO_MUDOU=1 quando algo mudou.
+ajustar_timer() { # <janela|validade> <valor>
+  local t="$1" valor="$2" acao descricao ext
+  if [ -z "$valor" ]; then
+    if [ -e "$UNIDADES_FS/runner-vps-$RUNNER_NOME-$t.timer" ]; then
+      "$SYSTEMCTL" disable --now "runner-vps-$RUNNER_NOME-$t.timer" || aviso "não foi possível desabilitar o timer de $t."
+      for ext in timer service; do rm -f "$UNIDADES_FS/runner-vps-$RUNNER_NOME-$t.$ext"; done
+      CICLO_MUDOU=1
+    fi
+    return 0
+  fi
+  if [ "$t" = janela ]; then acao=ajustar; descricao="Ajusta o runner à janela de horário"
+  else acao=expirar; descricao="Expira o runner na data de validade"; fi
+  gravar_se_mudou "$UNIDADES_FS/runner-vps-$RUNNER_NOME-$t.service" 644 < <(conteudo_ciclo_servico "$acao" "$descricao")
+  if [ "$ALTEROU" = 1 ]; then CICLO_MUDOU=1; fi
+  gravar_se_mudou "$UNIDADES_FS/runner-vps-$RUNNER_NOME-$t.timer" 644 < <("conteudo_timer_$t")
+  if [ "$ALTEROU" = 1 ]; then CICLO_MUDOU=1; fi
+}
+
+configurar_ciclo() {
+  CICLO_MUDOU=0
+  if [ -z "$JANELA" ] && [ -z "$VALIDADE" ]; then limpar_ciclo; return 0; fi
+  rm -f "$MARCA_EXPIRADA" # reaplicar com outra VALIDADE reativa a instância (a mesma, vencida, já foi recusada)
+  gravar_se_mudou "$CICLO_FS" 755 < <(conteudo_ciclo)
+  if [ "$ALTEROU" = 1 ]; then CICLO_MUDOU=1; passo "script de ciclo gravado em $CICLO_REAL"; fi
+  ajustar_timer janela "$JANELA"
+  ajustar_timer validade "$VALIDADE"
+  if [ "$CICLO_MUDOU" = 1 ]; then "$SYSTEMCTL" daemon-reload; fi
+  if [ -n "$JANELA" ]; then
+    passo "janela de horário: $JANELA (horário da VPS)"
+    "$SYSTEMCTL" enable --now "runner-vps-$RUNNER_NOME-janela.timer"
+  fi
+  if [ -n "$VALIDADE" ]; then
+    passo "validade: $VALIDADE (o runner é desligado no fim desse dia)"
+    "$SYSTEMCTL" enable --now "runner-vps-$RUNNER_NOME-validade.timer"
+  fi
+  if [ -n "$JANELA" ] && [ -e "$HOME_FS/runner/.runner" ]; then bash "$CICLO_FS" ajustar; fi
+}
+
+# Recusa instalar com validade já vencida ou repetir a validade que acabou de expirar a instância.
+verificar_validade() {
+  local hoje; hoje="$(hoje_vps)"
+  if [ -n "$VALIDADE" ] && [[ "$hoje" > "$VALIDADE" ]]; then
+    erro "VALIDADE $VALIDADE já passou (hoje é $hoje): informe uma data futura, ou VALIDADE= para ficar sem validade."; exit 2
+  fi
+  if [ -n "$VALIDADE" ] && [ -e "$MARCA_EXPIRADA" ] && grep -qx "validade=$VALIDADE" "$MARCA_EXPIRADA"; then
+    erro "a instância expirou em $(sed -n 's/^expirou_em=//p' "$MARCA_EXPIRADA") (VALIDADE=$VALIDADE): informe outra VALIDADE, ou VALIDADE= para ficar sem validade, para reativá-la."; exit 2
+  fi
+}
+
 ativar_servicos() {
   if [ "$SLICE_ALTEROU" = 1 ]; then "$SYSTEMCTL" daemon-reload; fi
   if [ "$UNIDADE_ALTEROU" = 1 ]; then user_systemctl daemon-reload; fi
-  if [ -e "$HOME_FS/runner/.runner" ]; then
+  if [ -n "$JANELA" ]; then
+    # com janela, quem liga e desliga é o timer: o serviço não sobe sozinho na inicialização
+    user_systemctl disable runner-vps || true
+    if [ ! -e "$HOME_FS/runner/.runner" ]; then
+      aviso "o runner ainda não está registrado: a janela só vai ligá-lo depois do registro. Rode de novo com RUNNER_TOKEN."
+    fi
+  elif [ -e "$HOME_FS/runner/.runner" ]; then
     user_systemctl enable --now runner-vps
   else
     user_systemctl enable runner-vps
@@ -713,6 +905,9 @@ mostrar_estado() {
   else
     printf 'limites: não gravados\n'
   fi
+  if [ -n "$JANELA" ]; then printf 'janela: %s (horário da VPS)\n' "$JANELA"; else printf 'janela: sempre ligado\n'; fi
+  if [ -n "$VALIDADE" ]; then printf 'validade: %s\n' "$VALIDADE"; else printf 'validade: sem validade\n'; fi
+  if [ -e "$MARCA_EXPIRADA" ]; then printf 'ciclo: expirada em %s\n' "$(sed -n 's/^expirou_em=//p' "$MARCA_EXPIRADA")"; fi
   if [ -e "$HOME_FS/runner/.runner" ]; then printf 'registro: .runner presente\n'; else printf 'registro: .runner ausente\n'; fi
   if [ -e "$HOME_FS/runner/.credentials" ]; then printf 'registro: .credentials presente\n'; else printf 'registro: .credentials ausente\n'; fi
   if [ -s "$HOME_FS/runner-vps.log" ]; then
@@ -764,6 +959,7 @@ remover_instancia() {
   fi
   unset RUNNER_TOKEN
 
+  limpar_ciclo
   passo "apagando os arquivos da instância"
   rm -rf "${HOME_FS:?}"
   rm -f "$CONF"
@@ -804,6 +1000,7 @@ case "$SUB" in
   "")
     if [ -z "$RUNNER_URL" ]; then erro "RUNNER_URL é obrigatório no primeiro instalar."; exit 2; fi
     if ! [[ "$RUNNER_URL" =~ ^https:// ]]; then erro "RUNNER_URL deve começar com https://."; exit 2; fi
+    verificar_validade
     passo "instância $RUNNER_NOME ($RUNNER_URL)"
     diagnostico || exit 1
     MEMORY_MAX_MB="$MEM_EFETIVO_MB"
@@ -828,6 +1025,7 @@ case "$SUB" in
     escrever_arquivos
     atualizar_hosts
     ativar_servicos
+    configurar_ciclo
     executar_extras
     mostrar_estado ;;
 esac
