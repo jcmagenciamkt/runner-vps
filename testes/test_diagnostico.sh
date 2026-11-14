@@ -24,9 +24,12 @@ conf="$TMP/raiz/etc/runner-vps/exemplo.conf"
 echo "instalar.sh: argumentos"
 
 nova_vps
-RUNNER_NOME='' rodar --so-checar; codigo=$?
-afirmar "sem RUNNER_NOME: saída 2" test "$codigo" -eq 2
-afirmar "sem RUNNER_NOME: a mensagem cita RUNNER_NOME" grep -q RUNNER_NOME "$TMP/err"
+for sub in --status --remover ''; do
+  RUNNER_NOME='' rodar $sub; codigo=$?
+  afirmar "sem RUNNER_NOME (${sub:-instalar}): saída 2" test "$codigo" -eq 2
+  afirmar "sem RUNNER_NOME (${sub:-instalar}): a mensagem cita RUNNER_NOME" grep -q RUNNER_NOME "$TMP/err"
+done
+# (o painel do servidor, --so-checar, é a exceção: ver test_painel.sh)
 for ruim in Foo 'a b' 'a_b' '-'; do
   [ "$ruim" = '-' ] && ruim='A'
   RUNNER_NOME="$ruim" rodar --so-checar; codigo=$?

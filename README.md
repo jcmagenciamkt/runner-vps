@@ -16,6 +16,7 @@ O runner roda num usuário próprio, **sem sudo e sem o grupo `docker`**, com um
 
 ```bash
 # 1. só o painel de decisão: sistema, recursos, instâncias, estado e veredito (não cria nada, não precisa de token)
+#    (sem --nome, mostra só o servidor; com --nome, também a situação dessa instância)
 ./registrar.sh --vps root@<vps>:<porta> --nome <nome> --so-checar --chave ~/.ssh/<chave>
 
 # 2. instalar
@@ -36,11 +37,12 @@ Ele pergunta, valida e só instala depois da sua confirmação:
 
 1. confere se o `gh` está autenticado (antes de qualquer pergunta);
 2. **como conectar**: se o seu `~/.ssh/config` tiver `Host` salvos, a primeira pergunta é *"usar um Host salvo (1) ou informar o IP (2)"*. Escolhendo **1**, ele lista os Hosts numerados, cada um com `usuário@hostname:porta`, e você escolhe pelo número; usuário, porta e chave vêm do arquivo (inclusive `IdentityFile` e `ProxyJump`). Escolhendo **2** (ou se não houver Hosts salvos, caso em que a pergunta nem aparece), ele pede **só o IP ou nome do host**, depois a **porta** (Enter = 22), **verifica se algo responde como SSH** nela e só então pergunta o **usuário** (Enter = `root`) e a chave. Nos dois casos termina com um teste de conexão de verdade. Só o arquivo `~/.ssh/config` é lido: `Include` não é seguido (mas um alias vindo de um `Include` ainda funciona se você digitar o nome em **2**);
-3. repositório (`<dono>/<repo>`) ou organização, conferindo que você é **administrador**;
-4. nome da instância (sugerido a partir do alvo), avisando se **já existe** na VPS;
-5. opções avançadas, só se você quiser: memória máxima, cota de CPU, rótulos e Docker rootless;
-6. o **painel de decisão** (veja abaixo), sempre antes da confirmação e seja qual for a forma de conexão: se o veredito for "não cabe", para aí, sem gerar token. Se o motivo for **memória**, ele explica as saídas e oferece **ajustar a reserva e o mínimo de memória e reavaliar o painel** (veja "Quando não cabe por memória");
-7. um resumo e a confirmação (padrão: não). Só então instala, mostra o `--status` e imprime o **comando equivalente sem o assistente**, para repetir noutra VPS.
+3. o **painel do servidor** (veja abaixo), **logo depois de conectar e antes de perguntar o repositório**: sistema, Docker, instâncias e recursos. Se o veredito for "não cabe", para aí, sem perguntar mais nada nem gerar token. Se o motivo for **memória**, ele explica as saídas e oferece **ajustar a reserva e o mínimo de memória e reavaliar o painel** (veja "Quando não cabe por memória");
+4. repositório (`<dono>/<repo>`) ou organização, conferindo que você é **administrador**;
+5. nome da instância (sugerido a partir do alvo), avisando se **já existe** na VPS;
+6. opções avançadas, só se você quiser: memória máxima, cota de CPU, rótulos e Docker rootless;
+7. o **painel desta instância**, que completa o do servidor com a situação da instância, os avisos que dependem do repositório e o veredito final já com as suas opções (mostra só a parte nova, sem repetir o servidor). O ajuste de memória também é oferecido aqui, se for ele o problema;
+8. um resumo e a confirmação (padrão: não). Só então instala, mostra o `--status` e imprime o **comando equivalente sem o assistente**, para repetir noutra VPS.
 
 Respostas inválidas repetem a pergunta; Ctrl-C ou fim da entrada cancelam sem instalar. O assistente **não grava nada em disco** (nem perfil, nem histórico) e **nunca pergunta o token**: ele é gerado pelo `gh` só no passo de instalação. Argumentos que você já passar (`--vps`, `--repo`, `--nome`…) pulam as perguntas deles. O `--vps` também aceita o nome de um `Host` do `~/.ssh/config` (`./registrar.sh --vps meu-servidor --repo <dono>/<repo> --nome <nome>`), sem `usuário@` nem `:porta`. Como o `ssh` roda com `BatchMode`, uma chave com senha precisa estar no `ssh-agent`.
 

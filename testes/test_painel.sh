@@ -170,4 +170,25 @@ painel; codigo=$?
 afirmar "com outra instância (2048 MB) já instalada: a conta a inclui" test "$c" -eq 0 -a "$codigo" -eq 1
 afirmar "a conta soma mínimo, reserva e as outras instâncias" saida_tem 'Com a reserva de 1024 MB e 2048 MB de outras instâncias, seriam necessários 5120 MB disponíveis (faltam 1024 MB)'
 
+echo "painel: só do servidor (sem RUNNER_NOME)"
+SWAP_MB=2048 nova_vps
+instalar_instancia existente "$URL"
+antes="$(snapshot "$TMP/raiz")"
+env -u RUNNER_NOME bash "$script" --so-checar > "$TMP/out" 2> "$TMP/err"; codigo=$?
+afirmar "sem RUNNER_NOME o --so-checar funciona (saída 0)" test "$codigo" -eq 0
+for secao in '== Sistema ==' '== Docker rootless ==' '== Instâncias nesta VPS ==' '== Avisos ==' '== Recursos e veredito =='; do
+  afirmar "servidor: seção presente: $secao" saida_tem "$secao"
+done
+afirmar "servidor: sem a seção da instância" test "$(grep -c '== Esta instância' "$TMP/out")" -eq 0
+afirmar "servidor: lista as instâncias já instaladas, sem marcar nenhuma como (esta)" \
+  test "$(grep -c '^existente: ' "$TMP/out")" -eq 1 -a "$(grep -c '(esta)' "$TMP/out")" -eq 0
+afirmar "servidor: o veredito é a última linha" grep -q '^VEREDITO: cabe (' <<< "$(ultima_linha)"
+afirmar "servidor: não cria nada" test "$antes" = "$(snapshot "$TMP/raiz")"
+afirmar "servidor: sem erro" test ! -s "$TMP/err"
+MEM_TOTAL_MB=3915 MEM_LIVRE_MB=1839 CPUS=2 nova_vps
+env -u RUNNER_NOME bash "$script" --so-checar > "$TMP/out" 2> "$TMP/err"; codigo=$?
+afirmar "servidor: não cabe por memória, com a conta e o veredito" test "$codigo" -eq 1 -a "$(grep -c 'faltam 1233 MB' "$TMP/out")" -eq 1
+RUNNER_NOME='Inválido' bash "$script" --so-checar > "$TMP/out" 2> "$TMP/err"; codigo=$?
+afirmar "um nome informado, mas inválido, continua sendo recusado no painel (saída 2)" test "$codigo" -eq 2
+
 relatorio "painel de decisão"

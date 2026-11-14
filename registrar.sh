@@ -7,7 +7,7 @@
 #
 # Uso:
 #   registrar.sh --vps root@<vps>[:porta] | <alias do ~/.ssh/config> (--repo <dono>/<repo> | --org <org>) --nome <nome> [opções]
-#   registrar.sh --vps … --nome <nome> --so-checar        só o diagnóstico (sem token)
+#   registrar.sh --vps … [--nome <nome>] --so-checar      só o diagnóstico (sem token); sem --nome, só o servidor
 #   registrar.sh --vps … --nome <nome> --status           estado da instância (sem token)
 #   registrar.sh --vps … (--repo|--org) --nome <nome> --remover   desfaz a instância (token de remoção)
 #   registrar.sh --vps … --nome <nome> --sem-token        reinstala/atualiza sem registrar de novo
@@ -278,7 +278,9 @@ valida_alvo() { # usa $repo ou $org; confere se o gh é administrador
 # Monta, no array $base do chamador, os argumentos comuns às chamadas ao próprio script (nunca contêm o token).
 montar_base() {
   local v
-  base=(--vps "$vps" --nome "$nome")
+  base=(--vps "$vps")
+  # (com "servidor" o nome fica de fora: é o painel que roda antes de a instância existir)
+  if [ "${1:-}" != servidor ] && [ -n "$nome" ]; then base+=(--nome "$nome"); fi
   [ -z "$chave" ] || base+=(--chave "$chave")
   [ -z "$rotulos" ] || base+=(--rotulos "$rotulos")
   [ -z "$nome_github" ] || base+=(--nome-github "$nome_github")
@@ -286,9 +288,66 @@ montar_base() {
   for v in "${extras[@]}"; do base+=(--var "$v"); done
 }
 
+# Avalia o painel de decisão (somente leitura) em duas etapas e devolve só quando cabe:
+#   servidor  - logo depois de a VPS conectar, antes de perguntar o repositório: sistema, Docker, instâncias
+#               e recursos (não leva nome nem URL). Se não couber, nada mais é perguntado.
+#   instancia - depois do repositório, do nome e das opções: acrescenta a situação desta instância e os avisos
+#               que dependem da URL; mostra só a parte nova (da seção da instância em diante).
+# Se o motivo incluir memória, oferece ajustar a reserva e o mínimo e reavaliar. A saída é capturada em variável
+# (nada é gravado em disco). Usa as variáveis do assistente (base, alvo, extras, reserva, minimo, saida, …).
+avaliar_painel() {
+  local etapa="$1" parte
+  local -a args=()
+  while :; do
+    montar_base "$etapa"
+    if [ "$etapa" = servidor ]; then
+      printf '\nPainel da VPS (somente leitura, não cria nada):\n\n'; args=("${base[@]}")
+    else
+      printf '\nPainel desta instância (somente leitura, não cria nada):\n\n'; args=("${base[@]}" "${alvo[@]}")
+    fi
+    saida_ok=0
+    if saida="$(bash "$self" "${args[@]}" --so-checar --quieto < /dev/null 2>&1)"; then saida_ok=1; fi
+    parte="$saida"
+    if [ "$etapa" != servidor ]; then
+      parte="$(sed -n '/^== Esta instância/,$p' <<< "$saida")"
+      [ -n "$parte" ] || parte="$saida"
+    fi
+    printf '%s\n' "$parte"
+    if [ "$saida_ok" -eq 1 ]; then break; fi
+    if ! grep -q '^VEREDITO: não cabe:.*memória' <<< "$saida"; then
+      erro "o veredito é \"não cabe\" (ou o painel falhou); nada foi instalado." 1
+    fi
+    printf '\nO runner não cabe por falta de memória. Saídas possíveis:\n'
+    printf '  - liberar memória na VPS (o painel mostra quanto falta) ou usar uma VPS maior;\n'
+    printf '  - reduzir a reserva do resto da VPS (RESERVA_MB) e/ou o mínimo do runner (MEM_MIN_MB): passa a\n'
+    printf '    caber, mas sobra menos folga para os outros serviços crescerem. O limite do runner continua\n'
+    printf '    valendo: um job que estourar a memória derruba só o runner, desde que sobre folga no resto da VPS;\n'
+    printf '  - manter os workflows pesados nos runners do GitHub.\n\n'
+    if ! sim_nao "Ajustar a reserva e o mínimo de memória e avaliar de novo?" n; then
+      erro "o veredito é \"não cabe\"; nada foi instalado." 1
+    fi
+    while :; do
+      pergunta resposta "Reserva de memória para o resto da VPS em MB" "$reserva"
+      if [[ "$resposta" =~ ^[0-9]+$ ]] && [ "$resposta" -gt 0 ]; then reserva="$resposta"; break; fi
+      aviso "use um número inteiro maior que zero."
+    done
+    while :; do
+      pergunta resposta "Memória mínima para o runner em MB" "$minimo"
+      if [[ "$resposta" =~ ^[0-9]+$ ]] && [ "$resposta" -gt 0 ]; then minimo="$resposta"; break; fi
+      aviso "use um número inteiro maior que zero."
+    done
+    if [ "$minimo" -lt 1024 ]; then aviso "mínimo muito baixo: jobs com Docker podem ser mortos por falta de memória."; fi
+    novos=()
+    for v in "${extras[@]}"; do
+      case "$v" in RESERVA_MB=* | MEM_MIN_MB=*) ;; *) novos+=("$v") ;; esac
+    done
+    extras=("${novos[@]}" "RESERVA_MB=$reserva" "MEM_MIN_MB=$minimo")
+  done
+}
+
 assistente() {
   local mem="" cpu="" rot="" self="${BASH_SOURCE[0]}" alvo_texto padrao_nome resposta v
-  local saida reserva=1024 minimo=2048
+  local saida saida_ok reserva=1024 minimo=2048
   local -a novos=()
   local -a base=() alvo=()
 
@@ -319,6 +378,9 @@ assistente() {
     aviso "não consegui conectar em $vps. Confira host, porta e chave. O assistente usa BatchMode: chave com senha precisa estar no ssh-agent."
     vps=""; chave=""
   done
+
+  # 1b. Painel do servidor: se a VPS não cabe o runner, para aqui, antes de perguntar o repositório.
+  avaliar_painel servidor
 
   # 2. Repositório ou organização.
   while [ -z "$repo" ] && [ -z "$org" ] || ! valida_alvo; do
@@ -369,48 +431,10 @@ assistente() {
     sim_nao "Instalar o Docker rootless do runner?" s || sem_docker=1
   fi
 
+  # 5. Painel desta instância (somente leitura): leva a URL do alvo para apontar divergências e dá o veredito
+  # final, já com as opções avançadas. Se não couber, para antes de gerar qualquer token.
+  avaliar_painel instancia
   montar_base
-
-  # 5. Painel de decisão (somente leitura): sistema, Docker, instâncias, estado desta instância, avisos e
-  # veredito. Leva a URL do alvo para apontar divergências. Se não couber, para antes de gerar qualquer token.
-  # Se o motivo incluir memória, oferece ajustar a reserva e o mínimo e reavaliar. A saída é capturada em
-  # variável (nada é gravado em disco).
-  while :; do
-    printf '\nPainel da VPS (somente leitura, não cria nada):\n\n'
-    if saida="$(bash "$self" "${base[@]}" "${alvo[@]}" --so-checar --quieto < /dev/null 2>&1)"; then
-      printf '%s\n' "$saida"; break
-    fi
-    printf '%s\n' "$saida"
-    if ! grep -q '^VEREDITO: não cabe:.*memória' <<< "$saida"; then
-      erro "o veredito é \"não cabe\" (ou o painel falhou); nada foi instalado." 1
-    fi
-    printf '\nO runner não cabe por falta de memória. Saídas possíveis:\n'
-    printf '  - liberar memória na VPS (o painel mostra quanto falta) ou usar uma VPS maior;\n'
-    printf '  - reduzir a reserva do resto da VPS (RESERVA_MB) e/ou o mínimo do runner (MEM_MIN_MB): passa a\n'
-    printf '    caber, mas sobra menos folga para os outros serviços crescerem. O limite do runner continua\n'
-    printf '    valendo: um job que estourar a memória derruba só o runner, desde que sobre folga no resto da VPS;\n'
-    printf '  - manter os workflows pesados nos runners do GitHub.\n\n'
-    if ! sim_nao "Ajustar a reserva e o mínimo de memória e avaliar de novo?" n; then
-      erro "o veredito é \"não cabe\"; nada foi instalado." 1
-    fi
-    while :; do
-      pergunta resposta "Reserva de memória para o resto da VPS em MB" "$reserva"
-      if [[ "$resposta" =~ ^[0-9]+$ ]] && [ "$resposta" -gt 0 ]; then reserva="$resposta"; break; fi
-      aviso "use um número inteiro maior que zero."
-    done
-    while :; do
-      pergunta resposta "Memória mínima para o runner em MB" "$minimo"
-      if [[ "$resposta" =~ ^[0-9]+$ ]] && [ "$resposta" -gt 0 ]; then minimo="$resposta"; break; fi
-      aviso "use um número inteiro maior que zero."
-    done
-    if [ "$minimo" -lt 1024 ]; then aviso "mínimo muito baixo: jobs com Docker podem ser mortos por falta de memória."; fi
-    novos=()
-    for v in "${extras[@]}"; do
-      case "$v" in RESERVA_MB=* | MEM_MIN_MB=*) ;; *) novos+=("$v") ;; esac
-    done
-    extras=("${novos[@]}" "RESERVA_MB=$reserva" "MEM_MIN_MB=$minimo")
-    montar_base
-  done
 
   # 6. Resumo e confirmação.
   printf '\nResumo:\n  VPS:        %s\n  Alvo:       %s\n  Instância:  %s (usuário runner-%s na VPS)\n' "$vps" "$alvo_texto" "$nome" "$nome"
@@ -440,8 +464,11 @@ if [ "$interativo" -eq 1 ]; then
 fi
 
 [ -n "$vps" ] || erro "falta --vps root@<vps>[:porta] (ou use --interativo)"
-[ -n "$nome" ] || erro "falta --nome <nome>"
-[[ "$nome" =~ ^[a-z0-9-]+$ ]] || erro "--nome só aceita [a-z0-9-]: $nome"
+# O painel do servidor (--so-checar) dispensa o nome da instância; os demais modos exigem.
+if [ -n "$nome" ] || [ "$modo" != so-checar ]; then
+  [ -n "$nome" ] || erro "falta --nome <nome>"
+  [[ "$nome" =~ ^[a-z0-9-]+$ ]] || erro "--nome só aceita [a-z0-9-]: $nome"
+fi
 [ -r "$instalar" ] || erro "não achei o instalar.sh em $instalar" 1
 for v in "${extras[@]}"; do
   [[ "$v" =~ ^[A-Z][A-Z0-9_]*=.*$ ]] || erro "--var espera CHAVE=valor, com a chave em maiúsculas: $v"
@@ -486,7 +513,7 @@ fi
 # Bloco de variáveis que vai na frente do script, pelo stdin do ssh.
 montar_env() {
   local redigir="${1:-0}"
-  printf 'export RUNNER_NOME=%q\n' "$nome"
+  [ -z "$nome" ] || printf 'export RUNNER_NOME=%q\n' "$nome"
   [ -z "$runner_url" ] || printf 'export RUNNER_URL=%q\n' "$runner_url"
   [ -z "$nome_github" ] || printf 'export RUNNER_NOME_GITHUB=%q\n' "$nome_github"
   [ -z "$rotulos" ] || printf 'export RUNNER_ROTULOS=%q\n' "$rotulos"

@@ -5,7 +5,8 @@
 # linha de comando: vai ao config.sh pela variável ACTIONS_RUNNER_INPUT_TOKEN, só durante a chamada.
 #
 # Uso: instalar.sh [--so-checar | --status | --remover]
-#   --so-checar mostra o painel de decisão (somente leitura) e termina com o veredito.
+#   --so-checar mostra o painel de decisão (somente leitura) e termina com o veredito. É o único modo que
+#   aceita ficar sem RUNNER_NOME: então mostra só o servidor (sem a seção da instância).
 set -euo pipefail
 
 passo() { printf '==> %s\n' "$*"; }
@@ -42,8 +43,12 @@ case "$SUB" in
 esac
 
 RUNNER_NOME="${RUNNER_NOME:-}"
-if [ -z "$RUNNER_NOME" ]; then erro "RUNNER_NOME é obrigatório."; uso; exit 2; fi
-if ! [[ "$RUNNER_NOME" =~ ^[a-z0-9-]+$ ]]; then
+# O painel (--so-checar) pode rodar só para o servidor, sem nome de instância (o assistente o usa antes de
+# perguntar o repositório); todo o resto exige RUNNER_NOME.
+SO_SERVIDOR=0
+if [ -z "$RUNNER_NOME" ] && [ "$SUB" = --so-checar ]; then SO_SERVIDOR=1; fi
+if [ -z "$RUNNER_NOME" ] && [ "$SO_SERVIDOR" -eq 0 ]; then erro "RUNNER_NOME é obrigatório."; uso; exit 2; fi
+if [ -n "$RUNNER_NOME" ] && ! [[ "$RUNNER_NOME" =~ ^[a-z0-9-]+$ ]]; then
   erro "RUNNER_NOME inválido: use só letras minúsculas, números e hífen."; exit 2
 fi
 
@@ -318,29 +323,31 @@ painel() {
   if [ "$quantas" -eq 0 ]; then printf 'nenhuma instância instalada ainda\n'
   else printf 'memória reservada pelas instâncias: %s MB\n' "$total"; fi
 
-  printf '\n== Esta instância (%s) ==\n' "$RUNNER_NOME"
-  if [ -f "$CONF" ]; then IFS='|' read -r url_conf _ _ <<< "$(campos_da_instancia "$CONF")"; fi
-  if UID_INST="$(uid_do_usuario)"; then
-    if [ -f "$CONF" ]; then
-      printf 'situação: já instalada (rodar de novo reaplica a configuração; nada muda nem reinicia se nada mudou)\n'
+  if [ "$SO_SERVIDOR" -eq 0 ]; then
+    printf '\n== Esta instância (%s) ==\n' "$RUNNER_NOME"
+    if [ -f "$CONF" ]; then IFS='|' read -r url_conf _ _ <<< "$(campos_da_instancia "$CONF")"; fi
+    if UID_INST="$(uid_do_usuario)"; then
+      if [ -f "$CONF" ]; then
+        printf 'situação: já instalada (rodar de novo reaplica a configuração; nada muda nem reinicia se nada mudou)\n'
+      else
+        printf 'situação: incompleta (o usuário existe, mas falta a configuração em /etc/runner-vps)\n'
+      fi
+      printf 'usuário: %s (uid %s)\n' "$USUARIO" "$UID_INST"
+      printf 'serviço runner-vps: %s\n' "$(estado_do_servico "$RUNNER_NOME")"
+      if [ -e "$HOME_FS/runner/.runner" ]; then printf 'registro no GitHub: .runner presente\n'
+      else printf 'registro no GitHub: .runner ausente\n'; fi
     else
-      printf 'situação: incompleta (o usuário existe, mas falta a configuração em /etc/runner-vps)\n'
+      if [ -f "$CONF" ]; then
+        printf 'situação: incompleta (a configuração existe, mas falta o usuário %s)\n' "$USUARIO"
+      else
+        printf 'situação: instalação nova (nada instalado ainda)\n'
+      fi
+      printf 'usuário: %s (ausente)\n' "$USUARIO"
     fi
-    printf 'usuário: %s (uid %s)\n' "$USUARIO" "$UID_INST"
-    printf 'serviço runner-vps: %s\n' "$(estado_do_servico "$RUNNER_NOME")"
-    if [ -e "$HOME_FS/runner/.runner" ]; then printf 'registro no GitHub: .runner presente\n'
-    else printf 'registro no GitHub: .runner ausente\n'; fi
-  else
-    if [ -f "$CONF" ]; then
-      printf 'situação: incompleta (a configuração existe, mas falta o usuário %s)\n' "$USUARIO"
-    else
-      printf 'situação: instalação nova (nada instalado ainda)\n'
+    if [ -n "$url_conf" ]; then printf 'URL configurada: %s\n' "$url_conf"; fi
+    if [ -n "$url_conf" ] && [ -n "$RUNNER_URL" ] && [ "$url_conf" != "$RUNNER_URL" ]; then
+      avisos+=("a instância já está configurada para $url_conf, mas a URL informada é $RUNNER_URL")
     fi
-    printf 'usuário: %s (ausente)\n' "$USUARIO"
-  fi
-  if [ -n "$url_conf" ]; then printf 'URL configurada: %s\n' "$url_conf"; fi
-  if [ -n "$url_conf" ] && [ -n "$RUNNER_URL" ] && [ "$url_conf" != "$RUNNER_URL" ]; then
-    avisos+=("a instância já está configurada para $url_conf, mas a URL informada é $RUNNER_URL")
   fi
 
   printf '\n== Avisos ==\n'
