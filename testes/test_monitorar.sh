@@ -12,7 +12,7 @@ source "$aqui/vps-falsa.sh"
 TOKEN_FALSO="AAAATOKENSECRETO123456"
 URL=https://github.com/dono/repo
 saida_tem() { grep -qF -- "$1" "$TMP/out"; }
-monitorar() { env -u RUNNER_NOME bash "$script" --monitorar "$@" > "$TMP/out" 2> "$TMP/err"; }
+monitorar() { env -u RUNNER_NOME bash "$script" --monitorar > "$TMP/out" 2> "$TMP/err"; }
 instalar() { # <nome>
   env RUNNER_NOME="$1" RUNNER_URL=$URL RUNNER_TOKEN="$TOKEN_FALSO" MEMORY_MAX_MB=1024 MEM_MIN_MB=512 bash "$script" > "$TMP/out" 2> "$TMP/err"
 }
