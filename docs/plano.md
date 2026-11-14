@@ -203,6 +203,19 @@ Modificar: `README.md` (Task 5).
 - [x] README: ajuste guiado e `--quieto`.
 - [x] Commit: `feat: assistente oferece ajustar reserva e mínimo de memória quando não cabe, e o painel mostra quanto falta`.
 
+## Task 11: painel do servidor antes das perguntas do repositório (duas etapas)
+
+**Files:** modificar `instalar.sh`, `registrar.sh`, `testes/test_painel.sh`, `testes/test_registrar.sh`, `testes/test_diagnostico.sh`, `testes/test_assistente.sh`, `README.md`, `docs/design.md`.
+**Regras:** design 4.6 (item 1b). O painel do servidor não leva nome, URL nem token.
+- [x] Testes primeiro:
+  1. `instalar.sh --so-checar` sem `RUNNER_NOME`: sai 0, tem as seções do servidor e o veredito por último, **sem** a seção da instância, não cria nada; não cabe por memória mostra a conta; nome inválido continua saída 2; `--status`, `--remover` e instalar sem nome continuam saída 2;
+  2. `registrar.sh --so-checar` sem `--nome`: sai 0, não envia `RUNNER_NOME`, `RUNNER_URL` nem token, não chama o `gh`; os outros modos sem `--nome` continuam saída 2;
+  3. assistente: o painel do servidor vem antes da pergunta do repositório e não leva `RUNNER_NOME`/`RUNNER_URL`/token (inclusive com `--nome` por argumento); se não couber, o repositório nem é perguntado (memória: oferece o ajuste; disco: para), sem checar nome, gerar token nem instalar;
+  4. a segunda etapa leva nome e URL, mostra só da seção da instância em diante (o servidor aparece uma vez) e também oferece o ajuste de memória; falha de disco só nela para sem token.
+- [x] Implementar (`SO_SERVIDOR` no `instalar.sh`, nome opcional no `registrar.sh --so-checar`, `avaliar_painel servidor|instancia` no assistente).
+- [x] Nota: o teste "sem RUNNER_NOME: saída 2" de `test_diagnostico.sh` passou a cobrir `--status`, `--remover` e a instalação, porque `--so-checar` deixou de exigir o nome (mudança de especificação; as asserções são as mesmas).
+- [x] Commit: `feat: assistente avalia o servidor antes de perguntar o repositório`.
+
 ## Fecho
 
 - [x] `shellcheck` limpo e `testes/rodar.sh` verde, local e no CI do projeto.

@@ -50,9 +50,14 @@ case "$tudo" in
     cat > "$arq"
     case "$modo" in
       --so-checar)
-        # ctl/cabe: 0 cabe; 1 memória (cabe depois que RESERVA_MB/MEM_MIN_MB são ajustados); 2 disco; 3 memória sempre
+        # ctl/cabe: 0 cabe; 1 memória (cabe depois que RESERVA_MB/MEM_MIN_MB são ajustados); 2 disco; 3 memória sempre.
+        # ctl/cabe_instancia: só vale quando a chamada leva RUNNER_NOME (a etapa da instância) e cabe=0.
         v="$(cat "$ctl/cabe" 2> /dev/null || echo 0)"
+        if [ "$v" = 0 ] && [ -f "$ctl/cabe_instancia" ] && grep -q 'RUNNER_NOME' "$arq"; then v="$(cat "$ctl/cabe_instancia")"; fi
         if [ "$v" = 1 ] && grep -q 'MEM_MIN_MB' "$arq"; then v=0; fi
+        printf '== Sistema ==\nsistema: falso\n'
+        if grep -q 'RUNNER_NOME' "$arq"; then printf '\n== Esta instância ==\nsituação: falsa\n'; fi
+        printf '\n== Recursos e veredito ==\n'
         case "$v" in
           0) echo 'VEREDITO: cabe (MemoryMax=4096M CPUQuota=200%)'; exit 0 ;;
           2) echo 'VEREDITO: não cabe: disco (mínimo 10 GB)'; exit 1 ;;
@@ -213,7 +218,7 @@ afirmar "valores inválidos (abc, x%, 'a b') repetiram a pergunta" "$(! grep -qE
 # 8. diagnóstico "não cabe"
 novo_cenario
 echo 1 > "$TMP/ctl/cabe"
-codigo="$(assistente "${CONEXAO[@]}" dono/repo '' n n)"
+codigo="$(assistente "${CONEXAO[@]}" n)"
 afirmar "não cabe: saída 1" "$([ "$codigo" = 1 ] && echo 0 || echo 1)"
 afirmar "não cabe: nada instalado e nenhum token gerado" "$(! instalou && ! gerou_token && echo 0 || echo 1)"
 afirmar "não cabe: mostra o veredito" "$(saida_tem 'VEREDITO: não cabe'; echo $?)"
@@ -367,7 +372,7 @@ afirmar "a instalação mantém a linha de andamento" "$(saida_tem '(instalar)';
 # 21. "não cabe" por memória: explica as saídas e oferece ajustar
 novo_cenario
 echo 1 > "$TMP/ctl/cabe"
-codigo="$(assistente "${CONEXAO[@]}" dono/repo '' n n)"
+codigo="$(assistente "${CONEXAO[@]}" n)"
 afirmar "recusando o ajuste: saída 1, sem token e sem instalar" "$([ "$codigo" = 1 ] && ! instalou && ! gerou_token && echo 0 || echo 1)"
 afirmar "explica as saídas: liberar memória, RESERVA_MB, MEM_MIN_MB e os runners do GitHub" \
   "$(saida_tem 'liberar memória' && saida_tem 'RESERVA_MB' && saida_tem 'MEM_MIN_MB' && saida_tem 'runners do GitHub'; echo $?)"
@@ -375,33 +380,34 @@ afirmar "oferece ajustar" "$(saida_tem 'Ajustar a reserva e o mínimo de memóri
 
 novo_cenario
 echo 1 > "$TMP/ctl/cabe"
-codigo="$(assistente "${CONEXAO[@]}" dono/repo '' n s abc 0 256 x 0 1536 s)"
+codigo="$(assistente "${CONEXAO[@]}" s abc 0 256 x 0 1536 dono/repo '' n s)"
 afirmar "ajustando (com respostas inválidas no caminho): conclui com 0" "$([ "$codigo" = 0 ] && instalou && echo 0 || echo 1)"
 afirmar "o primeiro painel (antes do ajuste) não leva RESERVA_MB nem MEM_MIN_MB" \
   "$(! grep -q 'MEM_MIN_MB' "$(ls "$TMP"/stdin.* | sort | head -n 1)"; echo $?)"
 afirmar "a instalação leva RESERVA_MB=256 e MEM_MIN_MB=1536" \
   "$(grep -q 'export RESERVA_MB=256' "$(inst_stdin)" && grep -q 'export MEM_MIN_MB=1536' "$(inst_stdin)"; echo $?)"
 afirmar "valores inválidos (abc, x, 0) não chegaram ao instalador" "$(! grep -qE 'RESERVA_MB=(abc|0)$|MEM_MIN_MB=(x|0)$' "$(inst_stdin)"; echo $?)"
-afirmar "o painel foi avaliado duas vezes" "$([ "$(grep -c 'bash -s -- --so-checar' "$TMP/chamadas.log")" -eq 2 ] && echo 0 || echo 1)"
+afirmar "o painel foi avaliado três vezes (servidor sem caber, servidor ajustado, instância)" "$([ "$(grep -c 'bash -s -- --so-checar' "$TMP/chamadas.log")" -eq 3 ] && echo 0 || echo 1)"
 afirmar "o resumo mostra os ajustes" "$(saida_tem 'Ajustes:    RESERVA_MB=256 MEM_MIN_MB=1536'; echo $?)"
 afirmar "o comando equivalente leva os ajustes" "$(saida_tem '--var RESERVA_MB=256' && saida_tem '--var MEM_MIN_MB=1536'; echo $?)"
-afirmar "o token só é gerado depois da segunda avaliação do painel" \
+afirmar "o token só é gerado depois da última avaliação do painel" \
   "$([ "$(linha_de registration-token)" -gt "$(grep -n 'bash -s -- --so-checar' "$TMP/chamadas.log" | tail -n 1 | cut -d: -f1)" ] && echo 0 || echo 1)"
 afirmar_sem "$TMP/out" "$TOKEN_FALSO"
 afirmar_sem "$TMP/err" "$TOKEN_FALSO"
 
 novo_cenario
 echo 1 > "$TMP/ctl/cabe"
-codigo="$(assistente "${CONEXAO[@]}" dono/repo '' n s '' '' s)"
+codigo="$(assistente "${CONEXAO[@]}" s '' '' dono/repo '' n s)"
 afirmar "Enter assume os padrões 1024 e 2048 na primeira vez" \
   "$([ "$codigo" = 0 ] && grep -q 'export RESERVA_MB=1024' "$(inst_stdin)" && grep -q 'export MEM_MIN_MB=2048' "$(inst_stdin)" && echo 0 || echo 1)"
 
 # 22. continua não cabendo: pergunta de novo, com os últimos valores como padrão
 novo_cenario
 echo 3 > "$TMP/ctl/cabe"
-codigo="$(assistente "${CONEXAO[@]}" dono/repo '' n s 256 1536 s 128 1024 n)"
+codigo="$(assistente "${CONEXAO[@]}" s 256 1536 s 128 1024 n)"
 afirmar "continuando sem caber: depois do 'não' sai com 1, sem token e sem instalar" "$([ "$codigo" = 1 ] && ! instalou && ! gerou_token && echo 0 || echo 1)"
 afirmar "o painel foi avaliado três vezes" "$([ "$(grep -c 'bash -s -- --so-checar' "$TMP/chamadas.log")" -eq 3 ] && echo 0 || echo 1)"
+afirmar "sem caber, o repositório nem chega a ser perguntado" "$(! saida_tem 'Repositório (<dono>/<repo>)'; echo $?)"
 afirmar "na segunda rodada, os últimos valores viram o padrão" \
   "$(saida_tem 'Reserva de memória para o resto da VPS em MB [256]' && saida_tem 'Memória mínima para o runner em MB [1536]'; echo $?)"
 afirmar "a terceira avaliação já leva os valores da segunda rodada" \
@@ -412,8 +418,46 @@ afirmar "um valor ajustado substitui o anterior (sem RESERVA_MB repetido)" \
 # 23. outro motivo (disco): não há o que ajustar
 novo_cenario
 echo 2 > "$TMP/ctl/cabe"
-codigo="$(assistente "${CONEXAO[@]}" dono/repo '' n s n)"
+codigo="$(assistente "${CONEXAO[@]}")"
 afirmar "não cabe por disco: sai com 1 sem oferecer ajuste" "$([ "$codigo" = 1 ] && ! saida_tem 'Ajustar a reserva' && ! instalou && ! gerou_token && echo 0 || echo 1)"
+afirmar "não cabe por disco: o repositório nem chega a ser perguntado e nenhum nome foi checado" \
+  "$(! saida_tem 'Repositório (<dono>/<repo>)' && ! houve 'test -e /etc/runner-vps/'; echo $?)"
+
+# 24. painel em duas etapas: o do servidor vem antes das perguntas do repositório; o da instância completa
+novo_cenario
+codigo="$(assistente "${CONEXAO[@]}" dono/repo '' n s)"
+afirmar "duas etapas: conclui com 0" "$([ "$codigo" = 0 ] && instalou && echo 0 || echo 1)"
+afirmar "o painel do servidor vem antes da pergunta do repositório" \
+  "$([ "$(grep -n 'Painel da VPS' "$TMP/out" | head -n 1 | cut -d: -f1)" -lt "$(grep -n 'Repositório (<dono>/<repo>)' "$TMP/out" | head -n 1 | cut -d: -f1)" ] && echo 0 || echo 1)"
+primeiro="$(ls "$TMP"/stdin.* | sort | head -n 1)"
+afirmar "o primeiro painel não leva RUNNER_NOME, RUNNER_URL nem token" "$(! grep -qE 'RUNNER_(NOME|URL|TOKEN)' "$primeiro"; echo $?)"
+afirmar "o painel foi avaliado duas vezes (servidor e instância)" "$([ "$(grep -c 'bash -s -- --so-checar' "$TMP/chamadas.log")" -eq 2 ] && echo 0 || echo 1)"
+afirmar "a segunda avaliação leva RUNNER_NOME e RUNNER_URL" \
+  "$(grep -l 'RUNNER_NOME' "$TMP"/stdin.* | xargs grep -l 'export RUNNER_URL=https://github.com/dono/repo' | xargs grep -L RUNNER_TOKEN | wc -l | grep -qx 1; echo $?)"
+afirmar "a segunda etapa mostra só a instância e o veredito, sem repetir o sistema" \
+  "$([ "$(grep -c '== Sistema ==' "$TMP/out")" -eq 1 ] && [ "$(grep -c '== Esta instância ==' "$TMP/out")" -eq 1 ] && [ "$(grep -c 'VEREDITO:' "$TMP/out")" -eq 2 ] && echo 0 || echo 1)"
+afirmar "o título da segunda etapa aparece" "$(saida_tem 'Painel desta instância'; echo $?)"
+afirmar "o nome é checado na VPS depois do primeiro painel" \
+  "$([ "$(linha_de 'test -e /etc/runner-vps/')" -gt "$(linha_de 'bash -s -- --so-checar')" ] && echo 0 || echo 1)"
+
+# 24b. --nome por argumento: o painel do servidor continua sem nome (só o da instância o leva)
+novo_cenario
+codigo="$(assistente n s -- --vps root@vps.exemplo --repo dono/repo --nome exemplo)"
+primeiro="$(ls "$TMP"/stdin.* | sort | head -n 1)"
+afirmar "com --nome por argumento: conclui e o primeiro painel segue sem RUNNER_NOME" \
+  "$([ "$codigo" = 0 ] && instalou && ! grep -q 'RUNNER_NOME' "$primeiro" && echo 0 || echo 1)"
+
+# 25. cabe no servidor, mas a instância esbarra em memória (ex.: opção avançada): o ajuste também é oferecido ali
+novo_cenario
+echo 1 > "$TMP/ctl/cabe_instancia"
+codigo="$(assistente "${CONEXAO[@]}" dono/repo '' n s 256 1536 s)"
+afirmar "falha só na etapa da instância: oferece o ajuste, reavalia e instala" \
+  "$([ "$codigo" = 0 ] && saida_tem 'Ajustar a reserva e o mínimo de memória' && instalou && grep -q 'export MEM_MIN_MB=1536' "$(inst_stdin)" && echo 0 || echo 1)"
+afirmar "o servidor foi avaliado uma vez e a instância duas" "$([ "$(grep -c 'bash -s -- --so-checar' "$TMP/chamadas.log")" -eq 3 ] && echo 0 || echo 1)"
+novo_cenario
+echo 2 > "$TMP/ctl/cabe_instancia"
+codigo="$(assistente "${CONEXAO[@]}" dono/repo '' n)"
+afirmar "falha de disco só na etapa da instância: sai com 1 sem token nem instalação" "$([ "$codigo" = 1 ] && ! instalou && ! gerou_token && echo 0 || echo 1)"
 
 # 13. o script não lê o token do teclado e o assistente não grava nada em disco
 afirmar "registrar.sh não lê o token do teclado" "$(! grep -nE 'read .*(token|TOKEN)' "$script"; echo $?)"

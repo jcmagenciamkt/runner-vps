@@ -128,6 +128,22 @@ printf '#!/usr/bin/env bash\nprintf "%%s\\n" "%s"\n' "$TOKEN_FALSO" > "$tmp/bin/
 rodar --vps root@vps.exemplo --repo dono/repo --nome exemplo --quieto > /dev/null
 afirmar "com --quieto: o token ainda vai pelo stdin e não aparece na saída" "$(grep -q "export RUNNER_TOKEN=$TOKEN_FALSO" "$tmp/ssh.stdin" && ! grep -q "$TOKEN_FALSO" "$tmp/out" "$tmp/err"; echo $?)"
 
+# 14. --so-checar não exige --nome (painel só do servidor); os outros modos continuam exigindo
+limpar
+codigo="$(rodar --vps root@vps.exemplo --so-checar --quieto)"
+afirmar "--so-checar sem --nome sai com 0" "$([ "$codigo" = 0 ] && echo 0 || echo 1)"
+afirmar "--so-checar sem --nome não envia RUNNER_NOME, RUNNER_URL nem token" "$(! grep -qE 'RUNNER_(NOME|URL|TOKEN)' "$tmp/ssh.stdin"; echo $?)"
+afirmar "--so-checar sem --nome repassa --so-checar e envia o instalar.sh" "$(grep -q -- 'bash -s -- --so-checar' "$tmp/ssh.args" && grep -q 'INSTALADOR FALSO' "$tmp/ssh.stdin"; echo $?)"
+afirmar "--so-checar sem --nome não chama o gh" "$([ ! -e "$tmp/gh.log" ] && echo 0 || echo 1)"
+limpar
+afirmar "--so-checar com nome inválido: saída 2" "$([ "$(rodar --vps root@v --so-checar --nome 'Ex emplo')" = 2 ] && echo 0 || echo 1)"
+for m in --status --remover --sem-token; do
+  limpar
+  afirmar "$m sem --nome: saída 2" "$([ "$(rodar --vps root@v --repo a/b $m)" = 2 ] && echo 0 || echo 1)"
+done
+afirmar "instalar sem --nome: saída 2" "$([ "$(rodar --vps root@v --repo a/b)" = 2 ] && echo 0 || echo 1)"
+afirmar "nada foi enviado nesses erros" "$([ ! -e "$tmp/ssh.args" ] && echo 0 || echo 1)"
+
 # 12. os scripts de entrada são executáveis (o README manda rodar ./registrar.sh)
 for f in registrar.sh instalar.sh gancho-fim.sh; do
   afirmar "$f tem o bit de execução" "$([ -x "$aqui/../$f" ] && echo 0 || echo 1)"
