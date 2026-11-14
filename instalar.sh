@@ -4,7 +4,7 @@
 # As variáveis vêm do ambiente; o stdin não é lido. RUNNER_TOKEN nunca é impresso, gravado nem passado na
 # linha de comando: vai ao config.sh pela variável ACTIONS_RUNNER_INPUT_TOKEN, só durante a chamada.
 #
-# Uso: instalar.sh [--so-checar | --listar | --config | --status | --remover]
+# Uso: instalar.sh [--so-checar | --listar | --config | --status | --verificar | --remover]
 #   --so-checar mostra o painel de decisão (somente leitura) e termina com o veredito. Sem RUNNER_NOME,
 #   mostra só o servidor (sem a seção da instância).
 #   --listar imprime os nomes das instâncias desta VPS, um por linha (somente leitura; dispensa RUNNER_NOME).
@@ -16,7 +16,7 @@ aviso() { printf 'AVISO: %s\n' "$*" >&2; }
 erro() { printf 'ERRO: %s\n' "$*" >&2; }
 uso() {
   cat >&2 <<'USO'
-Uso: instalar.sh [--so-checar | --listar | --config | --status | --remover]
+Uso: instalar.sh [--so-checar | --listar | --config | --status | --verificar | --remover]
 Variáveis: RUNNER_NOME (obrigatória, [a-z0-9-]+); RUNNER_URL (no primeiro instalar); RUNNER_TOKEN (registro e --remover);
 opcionais: RUNNER_NOME_GITHUB, RUNNER_ROTULOS, RUNNER_VERSAO, RUNNER_SHA256, DOCKER_ROOTLESS, RESERVA_MB, MEM_MIN_MB,
 DISCO_MIN_GB, MEMORY_MAX_MB, CPU_QUOTA, HOSTS_EXTRAS, PACOTES_EXTRAS, EXTRAS_SH, EXTRAS_SHA256, ENV_EXTRAS,
@@ -41,7 +41,7 @@ CHAVES=(RUNNER_URL RUNNER_NOME_GITHUB RUNNER_ROTULOS DOCKER_ROOTLESS RESERVA_MB 
 SUB="${1:-}"
 if [ "$#" -gt 1 ]; then uso; exit 2; fi
 case "$SUB" in
-  "" | --so-checar | --listar | --config | --status | --remover) ;;
+  "" | --so-checar | --listar | --config | --status | --verificar | --remover) ;;
   *) erro "argumento desconhecido: $SUB"; uso; exit 2 ;;
 esac
 
@@ -877,6 +877,96 @@ listar_instancias() {
   done | sort
 }
 # A configuração gravada da instância como CHAVE=valor (valor cru, sem escapes). Somente leitura.
+# --verificar: checklist pós-instalação, somente leitura. Cada linha é "ok:", "aviso:" ou "FALHA:"; sai com 1 se
+# houver alguma FALHA. Janela de horário e validade vencida deixam o serviço parado de propósito: viram aviso.
+V_FALHAS=0; V_TOTAL=0
+v_ok() { V_TOTAL=$((V_TOTAL + 1)); printf 'ok: %s\n' "$*"; }
+v_aviso() { printf 'aviso: %s\n' "$*"; }
+v_falha() { V_FALHAS=$((V_FALHAS + 1)); printf 'FALHA: %s\n' "$*"; }
+dono_de() { if [ -n "${DONO_CMD:-}" ]; then "$DONO_CMD" "$1"; else stat -c %U "$1"; fi; }
+grupos_de() { if [ -n "${GRUPOS_CMD:-}" ]; then "$GRUPOS_CMD" "$1"; else "${ID_CMD:-id}" -nG "$1"; fi; }
+
+verificar_instancia() {
+  local estado dono arq grupos g sudoers rodando tolerado=0 esperado real journal erradas=0 proc="${PGREP_CMD:-pgrep}"
+  local runner_fs="$HOME_FS/runner" unidade="$HOME_FS/.config/systemd/user/runner-vps.service"
+  if [ ! -f "$CONF" ]; then erro "a instância $RUNNER_NOME não existe nesta VPS."; return 1; fi
+  passo "verificando a instância $RUNNER_NOME"
+  if [ -n "$JANELA" ] || [ -e "$MARCA_EXPIRADA" ]; then tolerado=1; fi
+
+  if UID_INST="$(uid_do_usuario)"; then v_ok "usuário: $USUARIO existe (uid $UID_INST)"
+  else v_falha "usuário: $USUARIO não existe"; fi
+
+  if [ -n "$UID_INST" ]; then
+    grupos="$(grupos_de "$USUARIO" 2> /dev/null || true)"
+    erradas=0
+    for g in $grupos; do
+      case "$g" in
+        sudo | wheel | admin) v_falha "privilégios: o usuário está no grupo $g"; erradas=1 ;;
+        docker) v_falha "privilégios: o usuário está no grupo docker (daria acesso de root pelo socket)"; erradas=1 ;;
+      esac
+    done
+    sudoers="$(grep -rlE "^[[:space:]]*${USUARIO}[[:space:]]" "$RAIZ/etc/sudoers" "$RAIZ/etc/sudoers.d" 2> /dev/null | head -n 1 || true)"
+    if [ -n "$sudoers" ]; then v_falha "privilégios: o sudoers dá sudo ao usuário (${sudoers#"$RAIZ"})"; erradas=1; fi
+    if [ "$erradas" -eq 0 ]; then v_ok "privilégios: sem sudo e sem o grupo docker"; fi
+  fi
+
+  if [ -e "$runner_fs/.runner" ]; then v_ok "registro: .runner presente"; else v_falha "registro: .runner ausente (o runner não foi registrado)"; fi
+  if [ ! -e "$runner_fs/run.sh" ]; then v_falha "arquivos: run.sh ausente"
+  elif [ ! -x "$runner_fs/run.sh" ]; then v_falha "arquivos: run.sh sem permissão de execução"
+  else v_ok "arquivos: run.sh presente e executável"; fi
+
+  erradas=0
+  for arq in "$runner_fs" "$runner_fs/.runner" "$runner_fs/run.sh"; do
+    [ -e "$arq" ] || continue
+    dono="$(dono_de "$arq" 2> /dev/null || true)"
+    if [ "$dono" != "$USUARIO" ]; then v_falha "dono: ${arq#"$RAIZ"} é de ${dono:-desconhecido} (esperado $USUARIO)"; erradas=1; fi
+  done
+  if [ "$erradas" -eq 0 ]; then v_ok "dono: o diretório do runner e seus arquivos são de $USUARIO"; fi
+
+  estado="$(user_systemctl is-active runner-vps 2> /dev/null || true)"; estado="${estado:-desconhecido}"
+  rodando=0
+  if [ "$estado" = active ]; then rodando=1; v_ok "serviço: runner-vps ativo"
+  elif [ -e "$MARCA_EXPIRADA" ]; then v_aviso "serviço: instância expirada em $(sed -n 's/^expirou_em=//p' "$MARCA_EXPIRADA") (parada de propósito; veja --status)"
+  elif [ -n "$JANELA" ]; then v_aviso "serviço: runner-vps está $estado (pode ser só fora da janela $JANELA)"
+  else v_falha "serviço: runner-vps está $estado"; fi
+
+  if "$proc" -u root -f Runner.Listener > /dev/null 2>&1; then v_falha "processo: Runner.Listener rodando como root (jobs nunca devem rodar como root)"; fi
+  if "$proc" -u "$USUARIO" -f Runner.Listener > /dev/null 2>&1; then v_ok "processo: Runner.Listener roda como $USUARIO"
+  elif [ "$tolerado" -eq 1 ] && [ "$rodando" -eq 0 ]; then v_aviso "processo: Runner.Listener não está rodando (serviço parado por janela ou validade)"
+  else v_falha "processo: Runner.Listener não está rodando como $USUARIO"; fi
+
+  esperado="$HOME_INST/runner/run.sh"
+  if [ ! -f "$unidade" ]; then v_falha "unidade: arquivo ausente (${unidade#"$RAIZ"})"
+  else
+    real="$(sed -n 's/^ExecStart=//p' "$unidade" | head -n 1)"
+    if [ "$real" = "$esperado" ]; then v_ok "unidade: ExecStart=$real"; else v_falha "unidade: ExecStart aponta para ${real:-nada} (esperado $esperado)"; fi
+    real="$(sed -n 's/^WorkingDirectory=//p' "$unidade" | head -n 1)"
+    if [ "$real" = "$HOME_INST/runner" ]; then v_ok "unidade: WorkingDirectory=$real"; else v_falha "unidade: WorkingDirectory aponta para ${real:-nada} (esperado $HOME_INST/runner; run.sh usa caminhos relativos)"; fi
+  fi
+
+  if [ -e "$RAIZ/var/lib/systemd/linger/$USUARIO" ]; then v_ok "linger: ligado (o serviço volta depois de reiniciar a VPS)"
+  else v_falha "linger: desligado (o serviço não volta sozinho depois de reiniciar a VPS)"; fi
+
+  if [ -n "$UID_INST" ]; then
+    if journal="$("${JOURNALCTL_CMD:-journalctl}" "_UID=$UID_INST" _SYSTEMD_USER_UNIT=runner-vps.service -n 200 --no-pager 2> /dev/null)"; then
+      if grep -qE 'status=200/CHDIR|Failed at step CHDIR|externals/node[0-9]*/bin/node: No such file' <<< "$journal"; then
+        v_falha "journal: erro de diretório de trabalho (CHDIR ou node não encontrado): o serviço precisa rodar dentro do diretório do runner"
+      else v_ok "journal: sem erro de CHDIR nem de node nas últimas 200 linhas"; fi
+    else v_aviso "journal: não consegui ler o journal"; fi
+  fi
+
+  if [ "$V_FALHAS" -eq 0 ]; then
+    printf 'VERIFICAÇÃO: ok (%d checagens)\n' "$V_TOTAL"
+    return 0
+  fi
+  printf 'VERIFICAÇÃO: falhou em %d item(ns). Para diagnosticar:\n' "$V_FALHAS"
+  printf '  systemctl --user -M %s@ status runner-vps\n' "$USUARIO"
+  printf '  journalctl _UID=%s _SYSTEMD_USER_UNIT=runner-vps.service -n 100 --no-pager\n' "${UID_INST:-<uid>}"
+  printf '  systemctl --user -M %s@ cat runner-vps\n' "$USUARIO"
+  printf 'Não rode o run.sh à mão com o serviço ativo: seriam duas instâncias do mesmo runner.\n'
+  return 1
+}
+
 mostrar_config() {
   if [ ! -f "$CONF" ]; then erro "a instância $RUNNER_NOME não existe nesta VPS."; return 1; fi
   # shellcheck disable=SC1090
@@ -989,6 +1079,8 @@ validar_configuracao
 case "$SUB" in
   --status)
     mostrar_estado ;;
+  --verificar)
+    verificar_instancia ;;
   --remover)
     remover_instancia ;;
   --so-checar)
