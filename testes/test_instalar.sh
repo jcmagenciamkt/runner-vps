@@ -11,7 +11,7 @@ source "$aqui/vps-falsa.sh"
 
 TOKEN_FALSO="AAAATOKENSECRETO123456"
 URL=https://github.com/dono/repo
-rodar() { bash "$script" "$@" > "$TMP/out" 2> "$TMP/err"; }
+rodar() { bash "$script" > "$TMP/out" 2> "$TMP/err"; }
 tudo_saida() { cat "$TMP/out" "$TMP/err"; }
 tem() { grep -qF -- "$2" "$1"; }                      # tem <arquivo> <texto>
 chamou() { grep -qF -- "$1" "$TMP/chamadas.log"; }    # chamou <texto>
