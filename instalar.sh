@@ -19,6 +19,10 @@ DISCO_MIN_GB, MEMORY_MAX_MB, CPU_QUOTA, HOSTS_EXTRAS, PACOTES_EXTRAS, EXTRAS_SH,
 USO
 }
 
+# Chave do repositório apt do Docker, fixada pelo fingerprint publicado na documentação do Docker
+# (docs.docker.com/engine/install). DOCKER_APT_FINGERPRINT sobrescreve (só para testes e casos especiais).
+DOCKER_APT_FINGERPRINT_PADRAO="9DC858229FC7DD38854AE2D88D81803C0EBFCD88"
+
 # Runner do GitHub com versão e sha256 fixos (release oficial; sobrescreva com RUNNER_VERSAO e RUNNER_SHA256).
 RUNNER_VERSAO_PADRAO="2.338.2"
 RUNNER_SHA256_X64="baebf204307bac6193480852732f0aba2ae97b6c5597c244f4d5558390147c40"
@@ -248,15 +252,68 @@ apt_instalar() {
   fi
 }
 
+# Configura o repositório apt oficial do Docker (Debian e Ubuntu), com a chave fixada pelo fingerprint.
+# O arquivo baixado só vale se tiver EXATAMENTE uma chave primária e ela for a esperada: o apt confia em todas as
+# chaves do arquivo apontado por Signed-By, então só a chave fixada é exportada para o chaveiro.
+configurar_repositorio_docker() {
+  local os_release="${OS_RELEASE_FILE:-/etc/os-release}" id codename esperado dir bruto chaveiro primarias=()
+  if grep -rqs 'download.docker.com' "$RAIZ/etc/apt/sources.list" "$RAIZ/etc/apt/sources.list.d" 2> /dev/null; then
+    passo "repositório apt do Docker já configurado"
+    return 0
+  fi
+  if [ ! -f "$os_release" ]; then erro "não encontrei $os_release para descobrir a distribuição."; exit 1; fi
+  # shellcheck disable=SC1090
+  id="$(. "$os_release"; printf '%s' "${ID:-}")"
+  # shellcheck disable=SC1090
+  codename="$(. "$os_release"; if [ "${ID:-}" = ubuntu ]; then printf '%s' "${UBUNTU_CODENAME:-${VERSION_CODENAME:-}}"; else printf '%s' "${VERSION_CODENAME:-}"; fi)"
+  case "$id" in
+    debian | ubuntu) ;;
+    *) erro "distribuição sem suporte para configurar o repositório do Docker: '${id:-desconhecida}'. Configure o repositório oficial à mão (docs.docker.com/engine/install) e rode de novo."; exit 1 ;;
+  esac
+  if [ -z "$codename" ]; then erro "não consegui descobrir o codinome da distribuição em $os_release."; exit 1; fi
+  esperado="$(printf '%s' "${DOCKER_APT_FINGERPRINT:-$DOCKER_APT_FINGERPRINT_PADRAO}" | tr -d ' ' | tr '[:lower:]' '[:upper:]')"
+
+  passo "configurando o repositório apt do Docker ($id $codename)"
+  apt_instalar ca-certificates curl gnupg
+  dir="$(trabalho)/gnupg"
+  mkdir -p "$dir"; chmod 700 "$dir"
+  bruto="$(trabalho)/docker-gpg.asc"
+  if ! baixar "https://download.docker.com/linux/$id/gpg" "$bruto"; then
+    erro "não consegui baixar a chave do repositório do Docker."; exit 1
+  fi
+  if ! gpg --homedir "$dir" --batch --quiet --import "$bruto" 2> /dev/null; then
+    erro "o arquivo baixado não é uma chave GPG válida; o repositório do Docker não foi configurado."; exit 1
+  fi
+  mapfile -t primarias < <(gpg --homedir "$dir" --batch --with-colons --list-keys 2> /dev/null \
+    | awk -F: '$1 == "pub" { p = 1; next } p && $1 == "fpr" { print $10; p = 0 }')
+  if [ "${#primarias[@]}" -ne 1 ] || [ "${primarias[0]}" != "$esperado" ]; then
+    erro "o fingerprint da chave baixada (${primarias[*]:-nenhuma}) não é o esperado ($esperado) ou o arquivo tem mais de uma chave; o repositório do Docker não foi configurado."
+    exit 1
+  fi
+  chaveiro="$(trabalho)/docker.gpg"
+  gpg --homedir "$dir" --batch --export "$esperado" > "$chaveiro" 2> /dev/null
+  gpgconf --homedir "$dir" --kill all 2> /dev/null || true
+  gravar_se_mudou "$RAIZ/etc/apt/keyrings/docker.gpg" 644 < "$chaveiro"
+  gravar_se_mudou "$RAIZ/etc/apt/sources.list.d/docker.sources" 644 <<FONTE
+Types: deb
+URIs: https://download.docker.com/linux/$id
+Suites: $codename
+Components: stable
+Signed-By: /etc/apt/keyrings/docker.gpg
+FONTE
+  "$APT" update
+}
+
 instalar_pacotes_docker() {
   local pacotes=(uidmap dbus-user-session slirp4netns)
   if ! command -v "$ROOTLESS" > /dev/null 2>&1; then
+    configurar_repositorio_docker
     pacotes+=(docker-ce docker-ce-rootless-extras docker-compose-plugin)
   fi
   passo "pacotes para o Docker rootless: ${pacotes[*]}"
   apt_instalar "${pacotes[@]}"
   if ! command -v "$ROOTLESS" > /dev/null 2>&1; then
-    erro "$ROOTLESS não foi encontrado depois de instalar os pacotes. Configure o repositório oficial do Docker (docs.docker.com/engine/install) e rode de novo."
+    erro "$ROOTLESS não foi encontrado depois de instalar os pacotes do Docker."
     exit 1
   fi
 }

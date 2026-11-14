@@ -148,6 +148,8 @@ afirmar "rootless check falhando: não há fallback para o socket de root" bash 
 afirmar "rootless check falhando: install não chamado" bash -c '! grep -q "rootless install" "$1"' _ "$TMP/chamadas.log"
 
 nova_vps
+# repositório do Docker já configurado (a configuração dele é testada em test_docker_repo.sh)
+printf 'deb https://download.docker.com/linux/debian bookworm stable\n' > "$TMP/raiz/etc/apt/sources.list.d/docker.list"
 ROOTLESS_CMD="$TMP/bin/nao-existe" instalar_exemplo; codigo=$?
 afirmar "setuptool ausente: apt recebe os pacotes do Docker" bash -c 'grep -E "^apt " "$1" | grep -q "docker-ce-rootless-extras"' _ "$TMP/chamadas.log"
 afirmar "setuptool ausente mesmo após o apt: saída 1" test "$codigo" -eq 1

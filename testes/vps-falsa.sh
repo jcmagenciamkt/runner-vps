@@ -104,14 +104,22 @@ FALSO
   RUNNER_SHA256="$(sha256sum "$RUNNER_TARBALL" | cut -d' ' -f1)"; export RUNNER_SHA256
   export RUNNER_VERSAO="0.0.0-falso"
 
-  # BAIXAR_CMD <url> <destino>: em vez de rede, copia o tarball falso (ou $BAIXAR_ARQUIVO, se definido).
+  # BAIXAR_CMD <url> <destino>: em vez de rede, copia um arquivo local: para URLs terminadas em /gpg, $BAIXAR_CHAVE
+  # (falha se não definido); para o resto, $BAIXAR_ARQUIVO ou o tarball falso do runner.
   cat > "$TMP/bin/baixar-falso" <<'FALSO'
 #!/usr/bin/env bash
 printf '%s\n' "baixar $*" >> "$TMP/chamadas.log"
-cp "${BAIXAR_ARQUIVO:-$RUNNER_TARBALL}" "$2"
+case "$1" in
+  */gpg) [ -n "${BAIXAR_CHAVE:-}" ] && [ -f "$BAIXAR_CHAVE" ] || { echo "sem chave falsa para $1" >&2; exit 1; }; cp "$BAIXAR_CHAVE" "$2" ;;
+  *) cp "${BAIXAR_ARQUIVO:-$RUNNER_TARBALL}" "$2" ;;
+esac
 FALSO
   chmod +x "$TMP/bin/baixar-falso"
   export BAIXAR_CMD="$TMP/bin/baixar-falso"
+  # os-release falso (Debian 12); OS_RELEASE_FILE é lido pelo instalador para configurar o repositório do Docker.
+  mkdir -p "$RAIZ/etc/apt/sources.list.d"
+  printf 'ID=debian\nVERSION_CODENAME=bookworm\n' > "$RAIZ/etc/os-release"
+  export OS_RELEASE_FILE="$RAIZ/etc/os-release"
   export SOU_ROOT=1 AGORA=1700000000
 }
 
@@ -120,4 +128,16 @@ nova_vps() {
   rm -rf "${TMP:?}/raiz" "${TMP:?}/runner-fonte" "${TMP:?}/usuarios"
   : > "$TMP/chamadas.log"
   montar_vps_falsa
+}
+
+# gerar_chave_falsa <arquivo.asc>: gera uma chave GPG descartável (sem senha) num diretório temporário, grava a
+# chave pública armadura em <arquivo.asc> e define CHAVE_FPR com o fingerprint (maiúsculas).
+gerar_chave_falsa() {
+  local gh="$TMP/gnupg-$RANDOM$RANDOM"
+  mkdir -p "$gh"; chmod 700 "$gh"
+  gpg --homedir "$gh" --batch --quiet --passphrase '' --quick-generate-key 'Docker Falso <falso@exemplo.test>' ed25519 sign never 2> /dev/null
+  gpg --homedir "$gh" --batch --armor --export > "$1" 2> /dev/null
+  CHAVE_FPR="$(gpg --homedir "$gh" --batch --with-colons --list-keys 2> /dev/null | awk -F: '$1 == "fpr" { print $10; exit }')"
+  export CHAVE_FPR
+  gpgconf --homedir "$gh" --kill all 2> /dev/null || true
 }
