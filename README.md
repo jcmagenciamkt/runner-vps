@@ -35,14 +35,14 @@ Se preferir ser guiado, rode sem argumentos num terminal (ou use `--interativo`)
 Ele pergunta, valida e só instala depois da sua confirmação:
 
 1. confere se o `gh` está autenticado (antes de qualquer pergunta);
-2. VPS (`usuário@host` ou `usuário@host:porta`) e chave SSH, com **teste de conexão de verdade**;
+2. servidor: primeiro **só o IP ou nome do host**; depois a **porta** (Enter = 22). Ele **verifica se algo responde como SSH** nessa porta antes de seguir, e só então pergunta o **usuário** (Enter = `root`) e a chave. Por fim, testa a conexão de verdade. Se o nome digitado for um `Host` do seu `~/.ssh/config`, ele avisa que achou, **pula porta, usuário e chave** (o `ssh` usa o que está no arquivo) e testa por ali;
 3. repositório (`<dono>/<repo>`) ou organização, conferindo que você é **administrador**;
 4. nome da instância (sugerido a partir do alvo), avisando se **já existe** na VPS;
 5. opções avançadas, só se você quiser: memória máxima, cota de CPU, rótulos e Docker rootless;
 6. o diagnóstico `--so-checar`: se der "não cabe", para aí, sem gerar token;
 7. um resumo e a confirmação (padrão: não). Só então instala, mostra o `--status` e imprime o **comando equivalente sem o assistente**, para repetir noutra VPS.
 
-Respostas inválidas repetem a pergunta; Ctrl-C ou fim da entrada cancelam sem instalar. O assistente **não grava nada em disco** (nem perfil, nem histórico) e **nunca pergunta o token**: ele é gerado pelo `gh` só no passo de instalação. Argumentos que você já passar (`--vps`, `--repo`, `--nome`…) pulam as perguntas deles. Como o `ssh` roda com `BatchMode`, uma chave com senha precisa estar no `ssh-agent`.
+Respostas inválidas repetem a pergunta; Ctrl-C ou fim da entrada cancelam sem instalar. O assistente **não grava nada em disco** (nem perfil, nem histórico) e **nunca pergunta o token**: ele é gerado pelo `gh` só no passo de instalação. Argumentos que você já passar (`--vps`, `--repo`, `--nome`…) pulam as perguntas deles. O `--vps` também aceita o nome de um `Host` do `~/.ssh/config` (`./registrar.sh --vps meu-servidor --repo <dono>/<repo> --nome <nome>`), sem `usuário@` nem `:porta`. Como o `ssh` roda com `BatchMode`, uma chave com senha precisa estar no `ssh-agent`.
 
 Outras formas:
 

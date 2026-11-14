@@ -6,7 +6,7 @@
 # linha de comando (ps), pelo histórico do shell nem por arquivo.
 #
 # Uso:
-#   registrar.sh --vps root@<vps>[:porta] (--repo <dono>/<repo> | --org <org>) --nome <nome> [opções]
+#   registrar.sh --vps root@<vps>[:porta] | <alias do ~/.ssh/config> (--repo <dono>/<repo> | --org <org>) --nome <nome> [opções]
 #   registrar.sh --vps … --nome <nome> --so-checar        só o diagnóstico (sem token)
 #   registrar.sh --vps … --nome <nome> --status           estado da instância (sem token)
 #   registrar.sh --vps … (--repo|--org) --nome <nome> --remover   desfaz a instância (token de remoção)
@@ -29,12 +29,13 @@
 # Pré-requisitos: gh autenticado (gh auth status) com acesso de administrador ao repositório
 # (ou à organização), ssh, e o instalar.sh ao lado deste script.
 #
-# Variáveis só de teste (padrão: o comando real): GH_CMD, SSH_CMD, INSTALAR_SH.
+# Variáveis só de teste (padrão: o comando real): GH_CMD, SSH_CMD, TCP_CMD, INSTALAR_SH.
 set -euo pipefail
 
 aqui="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 gh_cmd="${GH_CMD:-gh}"
 ssh_cmd="${SSH_CMD:-ssh}"
+tcp_cmd="${TCP_CMD:-tcp_ssh}"
 instalar="${INSTALAR_SH:-$aqui/instalar.sh}"
 
 uso() { sed -n '2,/^set -euo/{/^set -euo/!p;}' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
@@ -98,13 +99,85 @@ sim_nao() { # <texto> <padrão: s|n>; devolve 0 para sim
   done
 }
 
-valida_vps() { # <usuário@host[:porta]>
+valida_vps() { # <usuário@host[:porta]> ou um nome simples (host ou Host do ~/.ssh/config)
+  if [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then return 0; fi
   if ! [[ "$1" =~ ^[A-Za-z_][A-Za-z0-9_.-]*@[A-Za-z0-9][A-Za-z0-9.-]*(:[0-9]{1,5})?$ ]]; then
-    aviso "VPS inválida: use usuário@host ou usuário@host:porta."; return 1
+    aviso "VPS inválida: use usuário@host, usuário@host:porta ou o nome de um Host do ~/.ssh/config."; return 1
   fi
   if [[ "$1" == *:* ]] && { [ "${1##*:}" -lt 1 ] || [ "${1##*:}" -gt 65535 ]; }; then
     aviso "porta fora do intervalo 1-65535."; return 1
   fi
+}
+
+valida_host() { # só o IP ou nome do servidor (ou um Host do ~/.ssh/config)
+  [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]] && return 0
+  aviso "digite só o IP ou o nome do servidor, sem usuário nem porta (eles vêm depois), ou o nome de um Host do ~/.ssh/config."
+  return 1
+}
+
+valida_porta() {
+  if [[ "$1" =~ ^[0-9]{1,5}$ ]] && [ "$1" -ge 1 ] && [ "$1" -le 65535 ]; then return 0; fi
+  aviso "a porta deve ser um número de 1 a 65535."; return 1
+}
+
+valida_usuario() {
+  [[ "$1" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]] && return 0
+  aviso "usuário inválido: use letras, números, _ e -."; return 1
+}
+
+# Procura algo que responda como SSH (banner "SSH-") em <host> <porta>, sem autenticar.
+tcp_ssh() {
+  local -a limite=()
+  if command -v timeout > /dev/null 2>&1; then limite=(timeout 8); fi
+  "${limite[@]}" bash -c 'exec 3<> "/dev/tcp/$1/$2" || exit 1; IFS= read -r -t 5 banner <&3 || true; case "${banner:-}" in SSH-*) exit 0 ;; esac; exit 1' _ "$1" "$2" 2> /dev/null
+}
+
+# Se <nome> é um Host do ~/.ssh/config (o ssh -G, que não conecta, resolve outro hostname),
+# imprime usuário@hostname:porta.
+alias_do_ssh_config() {
+  local saida h p u
+  saida="$("$ssh_cmd" -G "$1" 2> /dev/null < /dev/null)" || return 1
+  h="$(awk '$1 == "hostname" { print $2; exit }' <<< "$saida")"
+  p="$(awk '$1 == "port" { print $2; exit }' <<< "$saida")"
+  u="$(awk '$1 == "user" { print $2; exit }' <<< "$saida")"
+  if [ -z "$h" ] || [ "${h,,}" = "${1,,}" ]; then return 1; fi
+  printf '%s@%s:%s' "$u" "$h" "$p"
+}
+
+# Pergunta o servidor (host, porta), verifica o SSH, e só então usuário e chave. Define $vps e $chave.
+pedir_servidor() {
+  local entrada porta usuario resolvido
+  while :; do
+    pergunta entrada "Servidor: IP ou nome do host (ou um Host do seu ~/.ssh/config)"
+    if ! valida_host "$entrada"; then continue; fi
+    if resolvido="$(alias_do_ssh_config "$entrada")"; then
+      printf '  Achei "%s" no ~/.ssh/config: %s. Usuário, porta e chave vêm de lá.\n' "$entrada" "$resolvido"
+      vps="$entrada"; chave=""; return 0
+    fi
+    while :; do
+      pergunta porta "Porta do SSH" 22
+      if valida_porta "$porta"; then break; fi
+    done
+    printf 'Procurando um servidor SSH em %s:%s...\n' "$entrada" "$porta"
+    if ! "$tcp_cmd" "$entrada" "$porta"; then
+      aviso "nada respondeu como SSH em $entrada:$porta. Confira o IP, a porta e se a VPS está ligada."
+      continue
+    fi
+    printf '  ok\n'
+    while :; do
+      pergunta usuario "Usuário do SSH" root
+      if valida_usuario "$usuario"; then break; fi
+    done
+    while :; do
+      pergunta chave "Chave privada do SSH (Enter para a padrão ou o ssh-agent)"
+      case "$chave" in \~/*) chave="$HOME/${chave#\~/}" ;; esac
+      if [ -z "$chave" ] || valida_chave "$chave"; then break; fi
+      chave=""
+    done
+    vps="$usuario@$entrada"
+    if [ "$porta" != 22 ]; then vps="$vps:$porta"; fi
+    return 0
+  done
 }
 
 valida_chave() { # <caminho de um arquivo legível>
@@ -167,19 +240,7 @@ assistente() {
 
   # 1. VPS e chave, com teste de conexão de verdade.
   while :; do
-    if [ -z "$vps" ]; then
-      while :; do
-        pergunta vps "VPS (usuário@host ou usuário@host:porta)"
-        if valida_vps "$vps"; then break; fi
-        vps=""
-      done
-      while :; do
-        pergunta chave "Chave privada do SSH (Enter para a padrão ou o ssh-agent)"
-        case "$chave" in \~/*) chave="$HOME/${chave#\~/}" ;; esac
-        if [ -z "$chave" ] || valida_chave "$chave"; then break; fi
-        chave=""
-      done
-    fi
+    if [ -z "$vps" ]; then pedir_servidor; fi
     define_destino
     printf 'Testando a conexão com %s...\n' "$vps"
     if ssh_assistente true > /dev/null 2>&1; then printf '  ok\n'; break; fi
