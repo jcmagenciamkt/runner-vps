@@ -9,7 +9,7 @@ O runner roda num usuário próprio, **sem sudo e sem o grupo `docker`**, com um
 ## Pré-requisitos
 
 - **Na sua máquina:** `bash`, `ssh` e o [`gh`](https://cli.github.com) autenticado como **administrador** do repositório (ou da organização). O `gh` só serve para gerar o token de registro.
-- **Na VPS:** Debian ou Ubuntu (usa `apt`), `systemd`, acesso SSH como **root**, e, para o Docker rootless, o repositório apt oficial do Docker já configurado (veja [Pendências](#pendências)).
+- **Na VPS:** Debian ou Ubuntu (usa `apt`), `systemd` e acesso SSH como **root**. Se não houver Docker, o instalador configura o repositório apt oficial dele (veja abaixo).
 - Memória, CPU e disco folgados: o instalador mede e recusa com `VEREDITO: não cabe` (mínimos padrão: 2048 MB para o runner, 1024 MB de reserva para o resto da VPS, 10 GB de disco).
 
 ## Instalar com um comando
@@ -47,7 +47,7 @@ Para um subcomando, use `bash -s -- --so-checar` (ou `--status`, `--remover`).
 
 1. Diagnostica a VPS e para com `VEREDITO: não cabe` se faltar memória, CPU ou disco, **sem criar nada**.
 2. Cria o usuário `runner-<nome>` (sem sudo, sem grupo `docker`, sem chave SSH) com `linger` ligado.
-3. Instala o Docker rootless desse usuário (se `DOCKER_ROOTLESS=1`, o padrão). Se `dockerd-rootless-setuptool.sh check` falhar, **para com o motivo**; não existe alternativa com o socket de root.
+3. Instala o Docker rootless desse usuário (se `DOCKER_ROOTLESS=1`, o padrão). Numa VPS sem Docker, configura antes o repositório apt oficial (Debian ou Ubuntu), com a **chave GPG fixada pelo fingerprint** `9DC8 5822 9FC7 DD38 854A E2D8 8D81 803C 0EBF CD88`: recusa um arquivo com outro fingerprint ou com mais de uma chave. Se você já tem o repositório do Docker configurado, ele não mexe. Se `dockerd-rootless-setuptool.sh check` falhar, **para com o motivo**; não existe alternativa com o socket de root.
 4. Baixa o runner do GitHub com versão e sha256 fixos e o registra (se houver `RUNNER_TOKEN`).
 5. Grava a unidade `systemd --user`, o `.env` do runner, os limites da fatia do usuário (`MemoryMax`, `MemorySwapMax=0`, `CPUQuota`, `TasksMax=4096`), o gancho de fim de job e a configuração em `/etc/runner-vps/<nome>.conf` (`chmod 600`, sem token).
 6. Liga tudo e imprime o estado.
@@ -67,6 +67,7 @@ Valem em `--var CHAVE=valor` do `registrar.sh` ou no ambiente do `instalar.sh`. 
 | `RUNNER_TOKEN` | (sem) | Token de registro (ou de remoção, no `--remover`). Uso único; nunca gravado. Sem ele, o registro é pulado. |
 | `RUNNER_NOME_GITHUB` | `RUNNER_NOME` | Nome do runner no GitHub. |
 | `RUNNER_ROTULOS` | `RUNNER_NOME` | Rótulos; o GitHub acrescenta `self-hosted`, `Linux` e a arquitetura. |
+| `DOCKER_APT_FINGERPRINT` | o fixado no script | Fingerprint esperado da chave do repositório do Docker (só para casos especiais; não é gravado no `.conf`). |
 | `RUNNER_VERSAO`, `RUNNER_SHA256` | `2.338.2` e o sha fixo da arquitetura | Outra versão do runner; `RUNNER_VERSAO` exige `RUNNER_SHA256` da mesma release. O runner se atualiza sozinho depois. |
 | `DOCKER_ROOTLESS` | `1` | `0` desliga o Docker (sem `services:` nos jobs). |
 | `RESERVA_MB` | `1024` | Memória que fica para o resto da VPS. |
@@ -117,8 +118,7 @@ e o equivalente na VPS vem de `HOSTS_EXTRAS`, `PACOTES_EXTRAS`, `EXTRAS_SH` ou `
 
 ## Pendências
 
-- **Repositório apt do Docker:** o instalador **não** o configura. Em uma VPS sem Docker, configure antes o repositório oficial ([docs.docker.com/engine/install](https://docs.docker.com/engine/install)) ou o instalador para depois do `apt install`, dizendo isso.
-- **Primeira instalação real:** `useradd`, `systemctl --user -M`, `loginctl` e o Docker rootless só foram exercitados por comandos falsos. Rode `--so-checar` e acompanhe a primeira instalação.
+- **Primeira instalação real:** `useradd`, `systemctl --user -M`, `loginctl` e o Docker rootless só foram exercitados por comandos falsos, e a configuração do repositório do Docker só com chaves falsas (o fingerprint fixado vem da documentação do Docker, mas o arquivo real não foi baixado nos testes). Rode `--so-checar` e acompanhe a primeira instalação.
 - O log do gancho não registra a duração do job (exigiria um gancho de início de job).
 
 ## Testes
