@@ -524,6 +524,18 @@ confirmar_visibilidade() { # usa $repo
 #               que dependem da URL; mostra só a parte nova (da seção da instância em diante).
 # Se o motivo incluir memória, oferece ajustar a reserva e o mínimo e reavaliar. A saída é capturada em variável
 # (nada é gravado em disco). Usa as variáveis do assistente (base, alvo, extras, reserva, minimo, saida, …).
+# Painel que não deu "VEREDITO: não cabe" mas também não deu "cabe": o painel falhou (permissão, conexão…).
+# Diz isso com clareza, para não parecer que a VPS é pequena demais. <saída do painel>
+falha_do_painel() {
+  local linha
+  linha="$(grep -m1 '^ERRO:' <<< "$1")" || linha="$(grep -v '^[[:space:]]*$' <<< "$1" | tail -n 1)"
+  printf '\nO painel falhou antes de dar o veredito (isso não quer dizer que a VPS seja pequena): %s\n' "${linha:-sem mensagem}" >&2
+  case "$linha" in
+    *root*) printf 'Conecte com o usuário root (o instalador cria usuários e serviços do sistema).\n' >&2 ;;
+  esac
+  erro "o painel falhou; nada foi instalado." 1
+}
+
 avaliar_painel() {
   local etapa="$1" parte
   local -a args=()
@@ -543,8 +555,9 @@ avaliar_painel() {
     fi
     printf '%s\n' "$parte"
     if [ "$saida_ok" -eq 1 ]; then break; fi
+    if ! grep -q '^VEREDITO: não cabe' <<< "$saida"; then falha_do_painel "$saida"; fi
     if ! grep -q '^VEREDITO: não cabe:.*memória' <<< "$saida"; then
-      erro "o veredito é \"não cabe\" (ou o painel falhou); nada foi instalado." 1
+      erro "o veredito é \"não cabe\"; nada foi instalado." 1
     fi
     printf '\nO runner não cabe por falta de memória. Saídas possíveis:\n'
     printf '  - liberar memória na VPS (o painel mostra quanto falta) ou usar uma VPS maior;\n'
@@ -771,7 +784,10 @@ lote() {
     local ok=1
     saida="$(bash "$self" "${base[@]}" --so-checar --quieto < /dev/null 2>&1)" || ok=0
     printf '%s\n' "$saida"
-    [ "$ok" -eq 1 ] || erro "o veredito é \"não cabe\" (ou o painel falhou); nada foi instalado." 1
+    if [ "$ok" -eq 0 ]; then
+      if grep -q '^VEREDITO: não cabe' <<< "$saida"; then erro "o veredito é \"não cabe\"; nada foi instalado." 1; fi
+      falha_do_painel "$saida"
+    fi
     total="$(sed -n 's/^VEREDITO: cabe (MemoryMax=\([0-9][0-9]*\)M.*/\1/p' <<< "$saida" | head -n 1)"
     [ -n "$total" ] || erro "não consegui ler a memória disponível no painel da VPS; nada foi instalado." 1
     por_instancia=$((total / ${#itens[@]} / 256 * 256))
