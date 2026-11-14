@@ -1,0 +1,122 @@
+# runner-vps — design
+
+**Data:** 13/11/2026 · **Situação:** proposta, esperando aprovação do dono do repositório.
+**Origem:** os minutos do GitHub Actions do plano gratuito acabam antes do fim do mês em repositórios privados com CI pesado, e os jobs param de iniciar. A solução é um runner self-hosted numa VPS que já existe. Este projeto é **agnóstico**: não sabe nada do repositório que vai usar nem da VPS; tudo o que é específico entra por variável de ambiente ou por um script de extras. Itens marcados **(minha decisão)** foram escolhidos por quem escreveu e podem ser trocados.
+**Caminhos descartados** (para não serem reabertos sem motivo): *dar ao runner o socket do Docker de root*, porque equivale a root na VPS para qualquer PR; *runner efêmero com PAT ou GitHub App na VPS*, porque troca um risco por outro maior; *serviço de sistema via `svc.sh`*, porque ficaria fora da fatia do usuário e os limites não valeriam para o Docker rootless.
+
+## 1. Por que e o que é sucesso
+- O plano gratuito dá 2.000 minutos por mês em repositório privado. Um CI com back-end, front-end e testes de navegador gasta de 30 a 50 minutos por PR, e jobs pulados ainda cobram cerca de 1 minuto. Com agentes abrindo PRs automaticamente, os minutos acabam no meio do mês e nenhum PR pode ser mergeado.
+- **Sucesso:**
+  - os jobs rodam na VPS e não consomem minutos do plano;
+  - o dono do repositório **liga e desliga** o uso do runner por uma variável do repositório, sem PR;
+  - o resto da VPS (sites, bancos, outros serviços) não fica lento nem para por causa do CI: os limites de memória e CPU são fixos e calculados antes de instalar;
+  - um PR malicioso não lê arquivos fora do usuário do runner, não fala com o Docker de root e não alcança os contêineres de outros projetos;
+  - nenhum token do GitHub fica gravado na VPS; o token de registro é de uso único;
+  - rodar o instalador de novo não muda nada se nada mudou; remover desfaz tudo.
+
+## 2. Objetivos, fora do escopo e o que seria um fracasso
+- **Objetivos:** `instalar.sh` (root, idempotente, enviado por `ssh … 'bash -s'`), com diagnóstico "cabe / não cabe", `--so-checar`, `--status` e `--remover`; usuário por instância; Docker rootless opcional; limites na fatia do usuário; gancho de limpeza ao fim de cada job; configuração persistida em `/etc/runner-vps/<nome>.conf`; testes sem rede, sem Docker e sem root; CI do próprio projeto (shellcheck e testes); documentação de uso e de volta atrás.
+- **Fora do escopo:** runner efêmero; runner em contêiner; mais de um job por vez na mesma instância; aviso (Telegram, e-mail) quando o runner cai; runner no Windows ou macOS; mudanças nos workflows dos repositórios consumidores além da convenção da seção 4.5; firewall de entrada (o runner só faz conexões de saída).
+- **Seria um fracasso:** o job de um PR chegar a `/var/run/docker.sock`, a arquivos de outros usuários ou à rede Docker de outro projeto; o CI derrubar um serviço da VPS por falta de memória; o instalador deixar a VPS pela metade quando falha; um token aparecer em log, arquivo ou saída; o dono precisar de PR para voltar aos runners do GitHub.
+
+## 3. Restrições
+- VPS Linux com systemd, Ubuntu LTS ou Debian **(minha decisão: só `apt`)**, acesso root por SSH. O instalador roda como root, mas tudo o que o runner faz roda como o usuário da instância.
+- Os jobs podem precisar de Docker (`services:` e `docker compose`). O Docker rootless atende: namespace de rede próprio, portas publicadas acima de 1024 no `127.0.0.1` da VPS, sem acesso às redes do Docker de root. Exige `user namespaces` no kernel, `uidmap`, `dbus-user-session`, `slirp4netns` (ou `pasta`) e faixas em `/etc/subuid` e `/etc/subgid`.
+- Em `pull_request`, o GitHub executa o workflow da branch do PR. Quem tem escrita no repositório pode mudar o workflow e rodar qualquer comando no runner. Este projeto **não resolve isso**; ele reduz o que o runner tem e alcança. Repositórios públicos que aceitam PR de desconhecidos precisam da aprovação manual do GitHub ("Require approval for all outside collaborators") ou não devem usar isto.
+- Um runner self-hosted executa um job por vez. Mais paralelismo = mais instâncias.
+- O token de registro vem de *Settings → Actions → Runners → New self-hosted runner* (repositório ou organização), vale 1 hora e é de uso único. O instalador o recebe por variável, usa uma vez e não grava. `--remover` precisa de um token novo.
+- O runner se atualiza sozinho; o GitHub recusa runners com mais de 30 dias de atraso. A versão inicial é fixada por sha256 só para a integridade do download **(minha decisão)**.
+- Nada do repositório consumidor (nomes, domínios, IPs) entra neste projeto. O que é específico entra por `HOSTS_EXTRAS`, `PACOTES_EXTRAS` e `EXTRAS_SH`.
+
+## 4. Como funciona
+
+### 4.1 Visão geral
+```
+GitHub: workflow lê a variável CI_RUNS_ON
+   ["self-hosted","linux","<rótulo>"]  → fila da instância na VPS
+   "ubuntu-latest" ou ausente           → runner do GitHub (como antes)
+
+VPS, por instância <nome>:
+   usuário runner-<nome> (sem sudo, sem grupo docker), linger ligado
+   systemd --user: runner-vps.service (run.sh) + docker.service (rootless, opcional)
+   limites em /etc/systemd/system/user-<uid>.slice.d/runner-vps.conf
+   /opt/runner-vps/<nome>/runner/_work: checkout e artefatos do job
+   /etc/runner-vps/<nome>.conf: configuração da instância (sem token)
+   gancho ao fim de cada job: derruba os compose do job, prune, uma linha no log
+```
+
+### 4.2 Instância, usuário e runner
+- **Instância** = `RUNNER_NOME` (obrigatório; `[a-z0-9-]+`). Define o usuário `runner-<nome>`, o HOME `/opt/runner-vps/<nome>`, a configuração `/etc/runner-vps/<nome>.conf` e o nome do runner no GitHub (`RUNNER_NOME`, ou `RUNNER_NOME_GITHUB` se quiser outro). Várias instâncias convivem na mesma VPS; cada uma com Docker, limites e log próprios.
+- Usuário de sistema, shell `bash`, **sem** `sudo`, **sem** o grupo `docker`, sem chave SSH. O dono administra com `sudo -u runner-<nome>` e `systemctl --user -M runner-<nome>@`.
+- `loginctl enable-linger`, para o `systemd --user` existir sem sessão.
+- Runner do GitHub em `$HOME/runner`, versão e sha256 fixos no script (`RUNNER_VERSAO`, `RUNNER_SHA256`, sobrescrevíveis). Registro: `config.sh --unattended --replace --url $RUNNER_URL --name <nome> --labels <rótulos> --work _work`, com o token em `RUNNER_TOKEN`. `--replace` permite reinstalar com o mesmo nome. O instalador **não ecoa** o token, não usa `set -x` e nunca o grava.
+- `RUNNER_URL` aceita repositório (`https://github.com/<dono>/<repo>`) ou organização (`https://github.com/<org>`). `RUNNER_ROTULOS` padrão = `<nome>`; o GitHub acrescenta `self-hosted`, `Linux` e a arquitetura.
+- Runner **persistente** **(minha decisão)**: cada job começa com o checkout limpando o `_work`, e o gancho (4.4) remove o que sobrou no Docker.
+- Unidade de usuário `runner-vps.service` em `$HOME/.config/systemd/user/`: `ExecStart=$HOME/runner/run.sh`, `Restart=always`, `RestartSec=10`, `After=docker.service` quando o rootless estiver ligado, habilitada em `default.target`.
+- `$HOME/runner/.env` (o runner repassa aos jobs): `DOCKER_HOST=unix:///run/user/<uid>/docker.sock` (se rootless), `PATH` com `$HOME/.local/bin` na frente, e as linhas de `ENV_EXTRAS` (`CHAVE=valor`, separadas por `;`), para o repositório consumidor apontar o que precisar (por exemplo, o caminho de um navegador).
+- Configuração persistida em `/etc/runner-vps/<nome>.conf` (`chmod 600`, root): `RUNNER_URL`, `RUNNER_ROTULOS`, `DOCKER_ROOTLESS`, `MEM_MIN_MB`, `DISCO_MIN_GB`, `RESERVA_MB`, `HOSTS_EXTRAS`, `PACOTES_EXTRAS`, `EXTRAS_SH`, `ENV_EXTRAS`, `MEMORY_MAX_MB`, `CPU_QUOTA`. Na primeira execução vem das variáveis; nas seguintes, o arquivo é a fonte e as variáveis presentes o sobrescrevem. **Nunca** contém `RUNNER_TOKEN`.
+
+### 4.3 Docker rootless (opcional, `DOCKER_ROOTLESS=1` por padrão)
+- Como root: pacotes `docker-ce`, `docker-ce-rootless-extras`, `docker-compose-plugin`, `uidmap`, `dbus-user-session`, `slirp4netns` (do repositório oficial do Docker, se ainda não houver Docker; se houver, só os que faltam); uma linha em `/etc/subuid` e `/etc/subgid` para o usuário (faixa de 65536, escolhida sem colidir com as existentes).
+- Como o usuário: `dockerd-rootless-setuptool.sh install` e `systemctl --user enable --now docker`. Dados em `$HOME/.local/share/docker`.
+- Se `dockerd-rootless-setuptool.sh check` falhar, o instalador **para, com o motivo**, e não instala o runner. Não existe fallback para o socket de root.
+- Com `DOCKER_ROOTLESS=0`: nada disso; `.env` sem `DOCKER_HOST`; o gancho pula a parte do Docker.
+
+### 4.4 Diagnóstico, limites e limpeza
+- **Diagnóstico** (também em `--so-checar`, sem alterar nada): memória total e disponível (`/proc/meminfo`), `nproc`, disco livre no ponto de montagem de `/opt/runner-vps` (ou `/`), instâncias já instaladas (soma dos `MEMORY_MAX_MB` dos `.conf` existentes).
+- **Limites**: `MEMORY_MAX_MB = MemAvailable − RESERVA_MB − (soma das outras instâncias)`, arredondado para baixo em múltiplos de 256; `CPU_QUOTA = max(100, (nproc − 1) × 100)`%. Padrões: `RESERVA_MB=1024`, `MEM_MIN_MB=2048`, `DISCO_MIN_GB=10` **(minha decisão)**. O dono pode fixar `MEMORY_MAX_MB` e `CPU_QUOTA` à mão; o instalador ainda recusa se ficarem abaixo dos mínimos.
+- **Veredito**: `VEREDITO: cabe (MemoryMax=<n>M CPUQuota=<n>%)` e saída 0, ou `VEREDITO: não cabe: <motivo>` e saída 1 **sem criar nada**, mesmo com `RUNNER_TOKEN` definido.
+- Gravação em `/etc/systemd/system/user-<uid>.slice.d/runner-vps.conf`: `MemoryMax`, `MemorySwapMax=0`, `CPUQuota`, `TasksMax=4096`. O runner, o Docker rootless e todos os contêineres do job contam juntos.
+- **Gancho** `ACTIONS_RUNNER_HOOK_JOB_COMPLETED` = `$HOME/bin/gancho-fim.sh`: se houver Docker, `docker compose ls -q` → `down -v --remove-orphans` em cada projeto (o daemon é só do CI, então todo projeto ali é do job), depois `docker system prune -f --filter until=24h`; grava uma linha em `$HOME/runner-vps.log` com data, `GITHUB_JOB`, `GITHUB_RUN_ID`, duração e disco livre; **sai sempre com 0**. Caches que ficam de propósito, por acelerarem o job seguinte: `~/.cache`, `~/.npm`, `_work/_tool` e camadas de imagem com menos de 24 h.
+- **Extras do consumidor**, todos opcionais e idempotentes: `HOSTS_EXTRAS` (uma linha acrescentada a `/etc/hosts`, marcada `# runner-vps <nome>`); `PACOTES_EXTRAS` (apt, separados por espaço); `EXTRAS_SH` (caminho de um script na VPS, ou URL `https://` com `EXTRAS_SHA256`, executado como root depois da instalação; para dependências como bibliotecas de um navegador); `ENV_EXTRAS` (4.2).
+
+### 4.5 O que muda no repositório que usa o runner
+- Em cada job do workflow: `runs-on: ${{ vars.CI_RUNS_ON && fromJSON(vars.CI_RUNS_ON) || 'ubuntu-latest' }}`. Variável de repositório `CI_RUNS_ON` com JSON: `["self-hosted","linux","<rótulo>"]` para a VPS, `"ubuntu-latest"` (com aspas) para voltar. Sem a variável, nada muda. Esse é o botão de volta: sem PR, sem aprovação **(minha decisão)**.
+- Passos que só existem no runner do GitHub (`sudo`, caminhos como `/usr/bin/google-chrome`) ganham `if: runner.environment == 'github-hosted'`; o equivalente na VPS vem de `HOSTS_EXTRAS`, `PACOTES_EXTRAS`, `EXTRAS_SH` ou `ENV_EXTRAS`, ou de um passo com `if: runner.environment == 'self-hosted'`.
+- `actions/checkout`, `setup-*`, `cache`, `upload-artifact` e `services:` funcionam sem mudança (o `services:` exige Docker: `DOCKER_ROOTLESS=1`).
+- Workflows com segredos de valor (deploys, chaves SSH) **ficam nos runners do GitHub**, a não ser que o dono aceite que esses segredos passem pela VPS.
+
+### 4.6 Operação
+- Instalar / atualizar: `ssh root@<vps> 'RUNNER_URL=… RUNNER_NOME=… RUNNER_TOKEN=… bash -s' < instalar.sh`. Sem `RUNNER_TOKEN`, o registro é pulado (útil para só atualizar limites ou extras). Segunda execução sem mudanças: nenhum arquivo alterado, nenhum serviço reiniciado.
+- `instalar.sh --so-checar` (precisa de `RUNNER_NOME`): diagnóstico e veredito.
+- `instalar.sh --status`: usuário, serviços (`runner-vps`, `docker`), limites, última linha do log, estado do runner segundo `.runner`/`.credentials` (existência, não conteúdo).
+- `instalar.sh --remover` (precisa de `RUNNER_NOME` e `RUNNER_TOKEN`): `config.sh remove`, para e desabilita os serviços, remove o rootless (`dockerd-rootless-setuptool.sh uninstall` e os dados), apaga `$HOME`, a linha de `/etc/hosts`, o `.slice.d` e o `.conf`; apaga o usuário se não houver arquivo dele fora do HOME. Linhas de `/etc/subuid` ficam **(minha decisão)**: são inofensivas e evitam colisão se a instância voltar.
+- Se o runner cai, os jobs ficam em *Waiting for a runner* e o GitHub os cancela em 24 h: troque `CI_RUNS_ON` ou `systemctl --user -M runner-<nome>@ restart runner-vps`. Causa comum: disco cheio (`docker system prune -af` como o usuário).
+
+## 5. Ordem sugerida (para o plano)
+1. Harness de testes em bash (VPS falsa em diretório temporário, comandos falsos) e CI do projeto (shellcheck + testes).
+2. `instalar.sh`: argumentos, configuração persistida, diagnóstico e veredito.
+3. `instalar.sh`: instalação completa, idempotência, `--status`, `--remover`.
+4. `gancho-fim.sh`.
+5. README final com o passo a passo e a convenção do consumidor.
+
+## 6. O que fica para quem constrói
+- Versão do runner e sha256 (da release oficial no dia), e a lógica de escolher uma faixa livre em `/etc/subuid`.
+- Como detectar o ponto de montagem de `/opt/runner-vps` (`df --output=target`).
+- Formato exato da linha do log e do `--status`.
+- Se o harness de testes usa `bats` (dependência) ou um arquivo `testes/harness.sh` próprio **(sugestão: próprio, sem dependência)**.
+- Como passar `RUNNER_TOKEN` com segurança pelo `ssh 'bash -s'` (a variável precisa ser definida no comando remoto, não no local); o README traz a forma final e avisa sobre o histórico do shell.
+
+## 7. Decisões
+| # | Decisão | Quem decidiu | Data |
+| --- | --- | --- | --- |
+| 1 | Projeto agnóstico, em repositório próprio e público, sem nenhum dado do repositório consumidor nem da VPS | dono | 13/11/2026 |
+| 2 | Docker rootless opcional, ligado por padrão | dono | 13/11/2026 |
+| 3 | Documentação: README + `docs/design.md` + `docs/plano.md`; licença MIT | dono | 13/11/2026 |
+| 4 | Usuário por instância, sem sudo e sem grupo `docker`; nunca o socket de root | **(minha decisão)** | 13/11/2026 |
+| 5 | Runner persistente com gancho de limpeza; serviços `systemd --user`; limites na fatia do usuário | **(minha decisão)** | 13/11/2026 |
+| 6 | `runs-on` por variável `CI_RUNS_ON` no consumidor; sem variável = `ubuntu-latest` | **(minha decisão)** | 13/11/2026 |
+| 7 | Mínimos padrão: 2 GB, 1 CPU, 10 GB de disco; reserva padrão 1 GB; sobrescrevíveis | **(minha decisão)** | 13/11/2026 |
+| 8 | Só `apt` (Ubuntu/Debian) na primeira versão | **(minha decisão)** | 13/11/2026 |
+| 9 | Configuração persistida em `/etc/runner-vps/<nome>.conf`, sem token | **(minha decisão)** | 13/11/2026 |
+
+## 8. Pendências
+- [ ] **Self-hosted é cobrado no plano Free?** O GitHub anunciou e depois reviu uma cobrança por minuto de runners self-hosted em 2026. Conferir a página de preços atual antes de aprovar. **Quem responde: dono.**
+- [ ] **A conta bloqueada por cobrança ainda despacha jobs para self-hosted?** Só se descobre no primeiro PR de teste. Se não despachar, a conta precisa ser regularizada primeiro. **Quem responde: dono, na instalação.**
+
+Sem pendência aberta, a spec pode ser aprovada.
+
+## 9. Grilling concluído
+Grilling concluído: **não**
+
+Falta ao dono confirmar as duas pendências. As escolhas dele já feitas (agnóstico, público, rootless opcional, formato dos documentos, MIT) estão na tabela de decisões.
