@@ -114,6 +114,20 @@ afirmar "instalar.sh ausente: saída 1" "$([ "$codigo" = 1 ] && echo 0 || echo 1
 # 11. o texto do script não ecoa o token
 afirmar "registrar.sh não contém 'echo \"\$token' nem set -x" "$(! grep -qE 'echo .*\$token|set -x' "$script"; echo $?)"
 
+# 13. --quieto esconde as linhas de andamento (==>); sem ele, aparecem
+limpar
+rodar --vps root@vps.exemplo --nome exemplo --status > /dev/null
+afirmar "sem --quieto: a linha de andamento aparece" "$(grep -q '^==> Enviando o instalar.sh' "$tmp/out"; echo $?)"
+limpar
+rodar --vps root@vps.exemplo --nome exemplo --status --quieto > /dev/null
+afirmar "com --quieto: nenhuma linha ==> na saída" "$(! grep -q '^==>' "$tmp/out"; echo $?)"
+afirmar "com --quieto: o ssh ainda é chamado normalmente" "$(grep -q -- 'bash -s -- --status' "$tmp/ssh.args"; echo $?)"
+limpar
+# (o gh falso foi trocado por um que falha no cenário 9; volta o que devolve o token)
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "%s"\n' "$TOKEN_FALSO" > "$tmp/bin/gh"
+rodar --vps root@vps.exemplo --repo dono/repo --nome exemplo --quieto > /dev/null
+afirmar "com --quieto: o token ainda vai pelo stdin e não aparece na saída" "$(grep -q "export RUNNER_TOKEN=$TOKEN_FALSO" "$tmp/ssh.stdin" && ! grep -q "$TOKEN_FALSO" "$tmp/out" "$tmp/err"; echo $?)"
+
 # 12. os scripts de entrada são executáveis (o README manda rodar ./registrar.sh)
 for f in registrar.sh instalar.sh gancho-fim.sh; do
   afirmar "$f tem o bit de execução" "$([ -x "$aqui/../$f" ] && echo 0 || echo 1)"

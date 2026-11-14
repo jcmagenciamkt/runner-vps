@@ -39,7 +39,7 @@ Ele pergunta, valida e só instala depois da sua confirmação:
 3. repositório (`<dono>/<repo>`) ou organização, conferindo que você é **administrador**;
 4. nome da instância (sugerido a partir do alvo), avisando se **já existe** na VPS;
 5. opções avançadas, só se você quiser: memória máxima, cota de CPU, rótulos e Docker rootless;
-6. o **painel de decisão** (veja abaixo), sempre antes da confirmação e seja qual for a forma de conexão: se o veredito for "não cabe", para aí, sem gerar token;
+6. o **painel de decisão** (veja abaixo), sempre antes da confirmação e seja qual for a forma de conexão: se o veredito for "não cabe", para aí, sem gerar token. Se o motivo for **memória**, ele explica as saídas e oferece **ajustar a reserva e o mínimo de memória e reavaliar o painel** (veja "Quando não cabe por memória");
 7. um resumo e a confirmação (padrão: não). Só então instala, mostra o `--status` e imprime o **comando equivalente sem o assistente**, para repetir noutra VPS.
 
 Respostas inválidas repetem a pergunta; Ctrl-C ou fim da entrada cancelam sem instalar. O assistente **não grava nada em disco** (nem perfil, nem histórico) e **nunca pergunta o token**: ele é gerado pelo `gh` só no passo de instalação. Argumentos que você já passar (`--vps`, `--repo`, `--nome`…) pulam as perguntas deles. O `--vps` também aceita o nome de um `Host` do `~/.ssh/config` (`./registrar.sh --vps meu-servidor --repo <dono>/<repo> --nome <nome>`), sem `usuário@` nem `:porta`. Como o `ssh` roda com `BatchMode`, uma chave com senha precisa estar no `ssh-agent`.
@@ -59,6 +59,14 @@ Respostas inválidas repetem a pergunta; Ctrl-C ou fim da entrada cancelam sem i
 
 Motivos de "não cabe": memória, CPU, disco, **`systemd` ausente**, **`apt-get` ausente** e **user namespaces desligados** (com `DOCKER_ROOTLESS=1`). Os três últimos só valem quando o problema é detectado de verdade: se o sistema não informa o dado (por exemplo, não existe `max_user_namespaces`), o painel mostra "desconhecido" e não bloqueia. A instalação usa o mesmo veredito e recusa quando não cabe.
 
+#### Quando não cabe por memória
+
+Quando falta memória, o painel mostra a conta antes do veredito, por exemplo: *"sobrariam 768 MB para o runner (mínimo 2048 MB). Com a reserva de 1024 MB e 0 MB de outras instâncias, seriam necessários 3072 MB disponíveis (faltam 1233 MB)"*. O limite do runner é a memória **disponível** menos a reserva (`RESERVA_MB`, padrão 1024) menos o que as outras instâncias reservaram, e precisa ser pelo menos `MEM_MIN_MB` (padrão 2048).
+
+As saídas são: liberar memória ou usar uma VPS maior; **reduzir `RESERVA_MB` e/ou `MEM_MIN_MB`**; ou manter os workflows pesados nos runners do GitHub. O assistente oferece a segunda na hora: pergunta os dois valores (os últimos escolhidos viram o padrão), reavalia o painel e repete até caber ou você desistir. Os ajustes aparecem no resumo e vão para a instalação. Pela linha de comando: `--var RESERVA_MB=256 --var MEM_MIN_MB=1536`.
+
+Atenção: reduzir deixa menos folga para os outros serviços da VPS crescerem. O limite do runner continua valendo, então um job que estourar a memória derruba só o runner, desde que sobre folga no resto da VPS. Abaixo de 1024 MB de mínimo, jobs com Docker podem ser mortos por falta de memória.
+
 Outras formas:
 
 ```bash
@@ -68,7 +76,7 @@ Outras formas:
 ./registrar.sh … --mostrar                                     # imprime o que seria enviado (token redigido) e não conecta
 ```
 
-Opções: `--interativo` (assistente); `--org <org>` no lugar de `--repo`; `--rotulos a,b`; `--nome-github`; `--sem-docker`; `--var CHAVE=valor` (repetível) para qualquer variável da tabela abaixo. `./registrar.sh --help` lista tudo.
+Opções: `--interativo` (assistente); `--quieto` (sem as linhas `==>` de andamento); `--org <org>` no lugar de `--repo`; `--rotulos a,b`; `--nome-github`; `--sem-docker`; `--var CHAVE=valor` (repetível) para qualquer variável da tabela abaixo. `./registrar.sh --help` lista tudo.
 
 Sem o `registrar.sh`, o equivalente à mão é enviar as variáveis e o script pelo stdin do SSH (o `printf` é um comando interno do shell, então o token não aparece em `ps`; evite colar o token literal no terminal, por causa do histórico):
 

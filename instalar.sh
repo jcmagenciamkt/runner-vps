@@ -221,6 +221,15 @@ diagnostico() {
   if ! tem_apt; then motivos+=("apt-get ausente"); fi
   if [ "$DOCKER_ROOTLESS" = 1 ] && [ "$(valor_userns)" = 0 ]; then motivos+=("user namespaces desligados (o rootless exige)"); fi
 
+  if [ "$MEM_EFETIVO_MB" -lt "$MEM_MIN_MB" ]; then
+    if [ -z "$MEMORY_MAX_MB" ]; then
+      local precisa=$((MEM_MIN_MB + RESERVA_MB + outras_mb))
+      passo "memória insuficiente: sobrariam ${MEM_EFETIVO_MB} MB para o runner (mínimo ${MEM_MIN_MB} MB). Com a reserva de ${RESERVA_MB} MB e ${outras_mb} MB de outras instâncias, seriam necessários ${precisa} MB disponíveis (faltam $((precisa - mem_disp_mb)) MB)."
+    else
+      passo "memória insuficiente: MEMORY_MAX_MB=${MEM_EFETIVO_MB} está abaixo do mínimo de ${MEM_MIN_MB} MB."
+    fi
+  fi
+
   if [ "${#motivos[@]}" -gt 0 ]; then
     local IFS=';'
     printf 'VEREDITO: não cabe: %s\n' "${motivos[*]//;/; }"
