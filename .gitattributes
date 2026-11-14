@@ -1,0 +1,3 @@
+# Scripts vão para uma VPS Linux por `bash -s`: um CR no fim da linha quebra tudo. LF sempre.
+* text=auto eol=lf
+*.sh text eol=lf

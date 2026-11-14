@@ -29,6 +29,11 @@
 - Duas instâncias na mesma VPS falsa: a segunda desconta a memória da primeira e não colide em `/etc/subuid`.
 - O gancho sai com 0 mesmo com Docker falhando e nunca referencia `/var/run/docker.sock`.
 
+## Já existe (não refazer)
+
+- `registrar.sh` (lado de quem administra) e `testes/test_registrar.sh`: geram o token pelo `gh api`, montam as linhas `export` e as enviam com o `instalar.sh` pelo stdin do SSH (`bash -s -- [subcomando]`). O teste é autossuficiente; a Task 1 pode migrá-lo para o harness, mantendo todas as asserções. O `instalar.sh` precisa honrar esse contrato: variáveis vêm do ambiente, subcomando vem de `$1`, e o stdin não é lido.
+- `CLAUDE.md` e `AGENTS.md` (mesmo conteúdo): regras para agentes. Mantenha os dois iguais.
+
 ## File Structure
 
 Criar: `instalar.sh`, `gancho-fim.sh`, `systemd/runner-vps.service`, `systemd/runner-vps.slice.conf`, `testes/harness.sh`, `testes/vps-falsa.sh`, `testes/test_diagnostico.sh`, `testes/test_instalar.sh`, `testes/test_remover_status.sh`, `testes/test_gancho.sh`, `testes/rodar.sh`, `.github/workflows/ci.yml`, `.shellcheckrc`.
@@ -48,7 +53,7 @@ Modificar: `README.md` (Task 5).
 - [ ] `harness.sh` com as funções das interfaces; `rodar.sh` executa todo `testes/test_*.sh` e sai com 1 se algum falhar.
 - [ ] `vps-falsa.sh` com parâmetros `MEM_TOTAL_MB`, `MEM_LIVRE_MB`, `CPUS`, `DISCO_LIVRE_GB`.
 - [ ] Teste de fumaça do harness (dentro de `rodar.sh`): um comando falso registra a chamada e devolve o código pedido; o tarball falso confere o sha256.
-- [ ] `ci.yml`: em `ubuntu-latest` (este repositório é público; minutos ilimitados), `shellcheck -S warning *.sh testes/*.sh` e `testes/rodar.sh`.
+- [ ] `ci.yml`: em `ubuntu-latest` (este repositório é público; minutos ilimitados), `shellcheck -S warning *.sh testes/*.sh` e `testes/rodar.sh`. O `rodar.sh` precisa incluir o `testes/test_registrar.sh` que já existe.
 - [ ] Commit: `test: harness de testes com VPS falsa e CI com shellcheck`.
 
 ## Task 2: `instalar.sh` — argumentos, configuração e diagnóstico
@@ -100,7 +105,7 @@ Modificar: `README.md` (Task 5).
 ## Task 5: README final
 
 **Files:** modificar `README.md`.
-- [ ] Tirar o aviso "em planejamento". Passo a passo: pré-requisitos; gerar o token no GitHub (repositório ou organização); comando de instalação com a forma correta de passar o token pelo `ssh 'bash -s'` e o aviso sobre o histórico do shell; `--so-checar`, `--status`, `--remover`; tabela de todas as variáveis com padrão; a convenção do consumidor (4.5) com o trecho de YAML; operação (ver, se cair, disco cheio); limites de segurança; como rodar os testes (`testes/rodar.sh`).
+- [ ] Tirar o aviso "em planejamento". Passo a passo: pré-requisitos (`gh` como administrador, SSH root); `registrar.sh` como caminho principal, com os exemplos de cada subcomando, e o equivalente à mão pelo stdin do SSH; `--so-checar`, `--status`, `--remover`; tabela de todas as variáveis com padrão; a convenção do consumidor (4.5) com o trecho de YAML; operação (ver, se cair, disco cheio); limites de segurança; como rodar os testes (`testes/rodar.sh`).
 - [ ] Commit: `docs: README com instalação, variáveis, convenção do consumidor e operação`.
 
 ## Fecho
