@@ -157,6 +157,14 @@ afirmar "--config envia RUNNER_NOME, mas nunca token, e não chama o gh" \
   "$(grep -q 'export RUNNER_NOME=exemplo' "$tmp/ssh.stdin" && ! grep -q RUNNER_TOKEN "$tmp/ssh.stdin" && [ ! -e "$tmp/gh.log" ]; echo $?)"
 limpar
 afirmar "--config sem --nome: saída 2 e nada enviado" "$([ "$(rodar --vps root@v --config)" = 2 ] && [ ! -e "$tmp/ssh.args" ] && echo 0 || echo 1)"
+limpar
+codigo="$(rodar --vps root@vps.exemplo --nome exemplo --verificar --quieto)"
+afirmar "--verificar com --nome sai com 0 e repassa --verificar" "$([ "$codigo" = 0 ] && grep -q -- 'bash -s -- --verificar' "$tmp/ssh.args"; echo $?)"
+afirmar "--verificar envia RUNNER_NOME, mas nunca token, e não chama o gh" \
+  "$(grep -q 'export RUNNER_NOME=exemplo' "$tmp/ssh.stdin" && ! grep -q RUNNER_TOKEN "$tmp/ssh.stdin" && [ ! -e "$tmp/gh.log" ]; echo $?)"
+limpar
+afirmar "--verificar sem --nome: saída 2 e nada enviado" "$([ "$(rodar --vps root@v --verificar)" = 2 ] && [ ! -e "$tmp/ssh.args" ] && echo 0 || echo 1)"
+afirmar "--interativo recusa --verificar" "$([ "$(rodar --interativo --verificar --vps root@v --nome x)" = 2 ] && echo 0 || echo 1)"
 afirmar "--interativo recusa --listar e --config" \
   "$([ "$(rodar --interativo --listar --vps root@v)" = 2 ] && [ "$(rodar --interativo --config --vps root@v --nome x)" = 2 ] && echo 0 || echo 1)"
 

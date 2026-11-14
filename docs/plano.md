@@ -268,6 +268,17 @@ Modificar: `README.md` (Task 5).
 - [x] README e design.
 - [x] Commit: `feat: --perfil (opções do servidor e do runner nativo num arquivo)`.
 
+## Task 17: `--verificar`
+
+**Files:** modificar `instalar.sh`, `registrar.sh`, `testes/test_registrar.sh`, criar `testes/test_verificar.sh`, `README.md`, `docs/design.md`.
+**Regras:** somente leitura; nunca token.
+- [x] Testes primeiro (`test_verificar.sh`, VPS falsa com dono, grupos, `pgrep` e `journalctl` falsos): instância saudável (saída 0, todas as linhas ok, somente leitura); cada falha (`.runner`, `run.sh` ausente ou sem execução, dono errado de arquivo e do diretório, grupos `sudo`/`wheel`/`admin`/`docker`, sudoers, `ExecStart`, `WorkingDirectory`, unidade ausente, processo ausente ou de root, linger, journal com CHDIR ou node), journal normal e ilegível, serviço parado e `failed`, janela e validade vencida como aviso, instância inexistente e sem nome.
+- [x] `registrar.sh --verificar` repassa o subcomando (sem token, sem `gh`; `--interativo` recusa).
+- [x] Implementar `verificar_instancia` e os auxiliares.
+- [x] Mutação: 11 mutantes; os 3 que sobreviveram (wheel/admin, WorkingDirectory, dono do diretório) ganharam teste.
+- [x] README e design.
+- [x] Commit: `feat: --verificar (checklist pós-instalação)`.
+
 ## Fecho
 
 - [x] `shellcheck` limpo e `testes/rodar.sh` verde, local e no CI do projeto.
