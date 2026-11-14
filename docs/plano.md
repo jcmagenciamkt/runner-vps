@@ -144,16 +144,16 @@ Modificar: `README.md` (Task 5).
 
 **Files:** modificar `registrar.sh`, `testes/test_assistente.sh`, `README.md`.
 **Regras:** design 4.6 (assistente interativo, item 1). `TCP_CMD` é o comando falso do teste de porta.
-- [ ] Testes primeiro (atualizar as respostas do fluxo antigo, sem enfraquecer nenhuma asserção, e acrescentar):
+- [x] Testes primeiro (atualizar as respostas do fluxo antigo, sem enfraquecer nenhuma asserção, e acrescentar):
   1. ordem: host → porta → verificação de SSH (`TCP_CMD host porta`) → usuário → chave → teste de conexão; a verificação vem antes de qualquer `ssh`;
   2. host com `@`, `:` ou começando com `-`, porta (`abc`, `0`, `70000`) e usuário (`ro ot`) inválidos repetem a pergunta e nunca chegam a `TCP_CMD` nem ao `ssh`; Enter assume porta 22 e usuário `root`; a porta 22 não aparece no comando equivalente;
   3. nada responde como SSH: mensagem, pergunta de novo host e porta, sem `ssh` para o endereço que falhou;
   4. alias do `~/.ssh/config` (`ssh -G` devolve outro `hostname`): não pergunta porta, usuário nem chave, não chama `TCP_CMD`, testa e instala com `ssh … <alias>` sem `-i` nem `-p`, e o comando equivalente usa `--vps <alias>`; alias que não conecta repete a pergunta;
   5. nome que o `ssh -G` devolve igual ao digitado (não é alias) segue o fluxo de porta e usuário;
   6. `--vps <alias>` e `--vps usuário@host:porta` passados por argumento são aceitos; `--vps 'a b'` é recusado com saída 2.
-- [ ] Implementar no `registrar.sh` (`TCP_CMD`; por padrão, `/dev/tcp` com `timeout` e leitura do banner).
-- [ ] README: assistente e `--vps <alias>`.
-- [ ] Commit: `feat: assistente pergunta o servidor antes do usuário e aceita Host do ~/.ssh/config`.
+- [x] Implementar no `registrar.sh` (`TCP_CMD`; por padrão, `/dev/tcp` com `timeout` e leitura do banner).
+- [x] README: assistente e `--vps <alias>`.
+- [x] Commit: `feat: assistente pergunta o servidor antes do usuário e aceita Host do ~/.ssh/config`.
 
 ## Fecho
 
