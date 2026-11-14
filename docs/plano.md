@@ -216,6 +216,15 @@ Modificar: `README.md` (Task 5).
 - [x] Nota: o teste "sem RUNNER_NOME: saída 2" de `test_diagnostico.sh` passou a cobrir `--status`, `--remover` e a instalação, porque `--so-checar` deixou de exigir o nome (mudança de especificação; as asserções são as mesmas).
 - [x] Commit: `feat: assistente avalia o servidor antes de perguntar o repositório`.
 
+## Task 12: aviso de repositório público
+
+**Files:** modificar `registrar.sh`, `testes/test_assistente.sh`, `README.md`, `docs/design.md`.
+**Regras:** design 4.6 (item 2). Só avisa e pergunta; não bloqueia a quem confirma.
+- [x] Testes primeiro: público + "não" (e Enter) sai com 1 sem checar nome, gerar token nem instalar; o aviso cita público, fork e a recomendação do GitHub e vem depois do painel do servidor e antes da pergunta do nome; público + "sim" instala; privado: sem aviso nem pergunta; visibilidade ilegível ou consulta falhando: avisa e segue; organização: não consulta; `--repo` por argumento também pergunta; o token não aparece.
+- [x] Implementar `confirmar_visibilidade` e chamá-la depois de escolher o alvo.
+- [x] README e design.
+- [x] Commit: `feat: assistente avisa quando o repositório é público e pede confirmação`.
+
 ## Fecho
 
 - [x] `shellcheck` limpo e `testes/rodar.sh` verde, local e no CI do projeto.

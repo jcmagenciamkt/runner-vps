@@ -21,6 +21,7 @@ case "$1 $2" in
 esac
 case "$*" in
   *permissions.admin*) cat "$ctl/gh_admin" 2> /dev/null || echo true; exit 0 ;;
+  *.private*) [ ! -f "$ctl/gh_privado_falha" ] || exit 1; cat "$ctl/gh_privado" 2> /dev/null || echo true; exit 0 ;;
   *memberships/orgs*) cat "$ctl/gh_papel" 2> /dev/null || echo admin; exit 0 ;;
   *registration-token*) printf '%s\n' "$TOKEN_FALSO"; exit 0 ;;
 esac
@@ -458,6 +459,57 @@ novo_cenario
 echo 2 > "$TMP/ctl/cabe_instancia"
 codigo="$(assistente "${CONEXAO[@]}" dono/repo '' n)"
 afirmar "falha de disco só na etapa da instância: sai com 1 sem token nem instalação" "$([ "$codigo" = 1 ] && ! instalou && ! gerou_token && echo 0 || echo 1)"
+
+# 26. repositório público: aviso de risco (PRs de fork) e confirmação antes de seguir
+novo_cenario
+echo false > "$TMP/ctl/gh_privado"
+codigo="$(assistente "${CONEXAO[@]}" dono/repo n)"
+afirmar "repositório público, recusando: sai com 1, sem checar nome, gerar token nem instalar" \
+  "$([ "$codigo" = 1 ] && ! houve 'test -e /etc/runner-vps/' && ! gerou_token && ! instalou && echo 0 || echo 1)"
+afirmar "o aviso explica o risco (público, fork) e a recomendação do GitHub" \
+  "$(saida_tem 'é público' && saida_tem 'fork' && saida_tem 'recomenda'; echo $?)"
+afirmar "pergunta se quer continuar mesmo assim" "$(saida_tem 'Continuar mesmo assim?'; echo $?)"
+afirmar "consultou a visibilidade do repositório informado" "$(houve 'gh api repos/dono/repo --jq .private'; echo $?)"
+afirmar "o aviso vem depois do painel do servidor e antes da pergunta do nome" \
+  "$([ "$(grep -n 'Painel da VPS' "$TMP/out" | head -n 1 | cut -d: -f1)" -lt "$(grep -n 'Continuar mesmo assim?' "$TMP/out" | head -n 1 | cut -d: -f1)" ] && ! saida_tem 'Nome da instância' && echo 0 || echo 1)"
+afirmar_sem "$TMP/out" "$TOKEN_FALSO"
+afirmar_sem "$TMP/err" "$TOKEN_FALSO"
+
+novo_cenario
+echo false > "$TMP/ctl/gh_privado"
+codigo="$(assistente "${CONEXAO[@]}" dono/repo '' '' n s)"
+afirmar "repositório público: Enter (padrão) é não, e não instala" "$([ "$codigo" = 1 ] && ! instalou && ! gerou_token && echo 0 || echo 1)"
+
+novo_cenario
+echo false > "$TMP/ctl/gh_privado"
+codigo="$(assistente "${CONEXAO[@]}" dono/repo s '' n s)"
+afirmar "repositório público, confirmando: segue e instala" "$([ "$codigo" = 0 ] && instalou && saida_tem 'é público' && echo 0 || echo 1)"
+
+novo_cenario
+codigo="$(assistente "${CONEXAO[@]}" dono/repo '' n s)"
+afirmar "repositório privado: sem aviso e sem a pergunta extra" "$([ "$codigo" = 0 ] && instalou && ! saida_tem 'é público' && ! saida_tem 'Continuar mesmo assim?' && echo 0 || echo 1)"
+afirmar "repositório privado: a visibilidade foi consultada" "$(houve 'gh api repos/dono/repo --jq .private'; echo $?)"
+
+novo_cenario
+echo null > "$TMP/ctl/gh_privado"
+codigo="$(assistente "${CONEXAO[@]}" dono/repo '' n s)"
+afirmar "visibilidade ilegível: avisa que não conseguiu verificar e segue" \
+  "$([ "$codigo" = 0 ] && instalou && saida_tem 'não consegui verificar' && ! saida_tem 'Continuar mesmo assim?' && echo 0 || echo 1)"
+novo_cenario
+: > "$TMP/ctl/gh_privado_falha"
+codigo="$(assistente "${CONEXAO[@]}" dono/repo '' n s)"
+afirmar "consulta de visibilidade falhando: avisa e segue" "$([ "$codigo" = 0 ] && instalou && saida_tem 'não consegui verificar' && echo 0 || echo 1)"
+
+novo_cenario
+echo false > "$TMP/ctl/gh_privado"
+codigo="$(assistente "${CONEXAO[@]}" minha-org '' n s)"
+afirmar "organização: não consulta a visibilidade nem faz a pergunta" "$([ "$codigo" = 0 ] && instalou && ! houve '\.private' && ! saida_tem 'Continuar mesmo assim?' && echo 0 || echo 1)"
+
+novo_cenario
+echo false > "$TMP/ctl/gh_privado"
+codigo="$(assistente n -- --vps root@vps.exemplo --repo dono/repo --nome exemplo)"
+afirmar "--repo por argumento, público, recusando: também pergunta e sai com 1" \
+  "$([ "$codigo" = 1 ] && saida_tem 'Continuar mesmo assim?' && ! instalou && ! gerou_token && echo 0 || echo 1)"
 
 # 13. o script não lê o token do teclado e o assistente não grava nada em disco
 afirmar "registrar.sh não lê o token do teclado" "$(! grep -nE 'read .*(token|TOKEN)' "$script"; echo $?)"
