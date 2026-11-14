@@ -288,6 +288,28 @@ montar_base() {
   for v in "${extras[@]}"; do base+=(--var "$v"); done
 }
 
+# Runner self-hosted em repositório público: qualquer pessoa pode abrir um PR de um fork, e os workflows de PR
+# rodariam no servidor. Só avisa e pede confirmação; não bloqueia. Devolve 0 para seguir e 1 para parar.
+# Falha ao consultar a visibilidade não impede: avisa e segue. Organizações não são consultadas (a visibilidade
+# vale por repositório e, por padrão, o grupo de runners da organização não atende repositórios públicos).
+confirmar_visibilidade() { # usa $repo
+  local privado
+  if ! privado="$("$gh_cmd" api "repos/$repo" --jq .private 2> /dev/null < /dev/null)"; then privado=""; fi
+  case "$privado" in
+    true) return 0 ;;
+    false)
+      printf '\nAtenção: %s é público.\n' "$repo"
+      printf '  Qualquer pessoa pode abrir um pull request a partir de um fork, e os workflows de pull request\n'
+      printf '  rodariam neste servidor, com acesso à rede e aos recursos da VPS. O GitHub recomenda usar runners\n'
+      printf '  self-hosted só com repositórios privados. Se mesmo assim for usar, confira em Settings > Actions >\n'
+      printf '  General a aprovação de workflows de forks e evite dar ao runner qualquer segredo ou acesso sensível.\n\n'
+      sim_nao "Continuar mesmo assim?" n ;;
+    *)
+      aviso "não consegui verificar se $repo é público ou privado; confira antes de usar o runner (runner self-hosted em repositório público é arriscado)."
+      return 0 ;;
+  esac
+}
+
 # Avalia o painel de decisão (somente leitura) em duas etapas e devolve só quando cabe:
 #   servidor  - logo depois de a VPS conectar, antes de perguntar o repositório: sistema, Docker, instâncias
 #               e recursos (não leva nome nem URL). Se não couber, nada mais é perguntado.
@@ -392,6 +414,9 @@ assistente() {
   done
   if [ -n "$repo" ]; then alvo=(--repo "$repo"); alvo_texto="repositório $repo"
   else alvo=(--org "$org"); alvo_texto="organização $org"; fi
+  if [ -n "$repo" ] && ! confirmar_visibilidade; then
+    erro "repositório público: nada foi instalado." 1
+  fi
 
   # 3. Nome da instância (sugestão derivada do alvo); avisa se já existe na VPS.
   padrao_nome="${repo#*/}"; [ -n "$repo" ] || padrao_nome="$org"
