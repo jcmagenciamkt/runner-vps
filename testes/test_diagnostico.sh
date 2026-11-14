@@ -38,7 +38,7 @@ afirmar "argumento desconhecido: saída 2" test "$codigo" -eq 2
 # Sem ser root: um `id` falso devolve 1000 e SOU_ROOT não está ligado.
 mkdir -p "$TMP/idbin"; printf '#!/usr/bin/env bash\necho 1000\n' > "$TMP/idbin/id"; chmod +x "$TMP/idbin/id"
 antes="$(snapshot "$TMP/raiz")"
-PATH="$TMP/idbin:$PATH" SOU_ROOT= RUNNER_NOME=exemplo RUNNER_URL=https://github.com/dono/repo rodar; codigo=$?
+PATH="$TMP/idbin:$PATH" SOU_ROOT='' RUNNER_NOME=exemplo RUNNER_URL=https://github.com/dono/repo rodar; codigo=$?
 afirmar "sem ser root: saída 1" test "$codigo" -eq 1
 afirmar "sem ser root: nenhum arquivo criado ou alterado" test "$antes" = "$(snapshot "$TMP/raiz")"
 
