@@ -31,10 +31,11 @@
 
 ## Já existe (não refazer)
 
+- Task 4 pronta: `gancho-fim.sh` e `testes/test_gancho.sh`. O `instalar.sh` carrega uma **cópia embutida** do gancho (função `conteudo_gancho`); o teste instala numa VPS falsa e compara o arquivo instalado com o `gancho-fim.sh` do repositório (`cmp`), então ao mudar um, regere o outro. A linha do log é `<data ISO UTC> job=<GITHUB_JOB> run=<GITHUB_RUN_ID> docker=<ok|falhou|pulado> disco=<N>G`. **Sem duração**: o design a cita, mas medi-la exige um gancho de início de job (`ACTIONS_RUNNER_HOOK_JOB_STARTED`) que o plano não prevê; fica como melhoria.
 - Task 3 pronta (`instalar.sh` completo, `testes/test_instalar.sh`, `testes/test_remover_status.sh`). Decisões e desvios do texto do plano:
   - **Token pelo ambiente:** o `config.sh` recebe o token em `ACTIONS_RUNNER_INPUT_TOKEN` (o runner lê essa variável e a apaga), nunca em `--token` na linha de comando. Nos testes o `config.sh` falso grava o que viu em `$TMP/config-token-visto`, fora de `RAIZ`.
   - **Lista de substituições estendida:** além da lista fechada, `COMO_USUARIO_CMD <usuario> <comando…>` (padrão `runuser -u`), `CHOWN_CMD`, `ID_CMD` (padrão `id`) e `ARQUIVOS_DO_USUARIO_CMD`. `BAIXAR_ARQUIVO` (só nos testes) escolhe o arquivo que o `BAIXAR_CMD` falso copia.
-  - **Templates embutidos** no `instalar.sh` (não existe `systemd/`), porque o script viaja sozinho pelo stdin. O `gancho-fim.sh` também será embutido: por ora o `instalar.sh` grava um gancho vazio (`exit 0`) e a Task 4 troca o conteúdo e acrescenta um teste que compara o embutido com o arquivo.
+  - **Templates embutidos** no `instalar.sh` (não existe `systemd/`), porque o script viaja sozinho pelo stdin. O `gancho-fim.sh` também é embutido (ver Task 4).
   - **`EXTRAS_SH` roda depois de ligar o serviço** (último passo), como diz o teste do plano, e não antes do `daemon-reload`.
   - **Serviço sem registro:** se o `.runner` não existe (sem `RUNNER_TOKEN`), o serviço é só habilitado (`enable`), não iniciado, para não ficar em laço de erro.
   - **Runner pinado:** v2.338.2, sha256 de x64 e arm64 calculados baixando o asset oficial da release (confira contra as notas da release se quiser). `RUNNER_VERSAO` exige `RUNNER_SHA256`. Depois de extrair, roda o `bin/installdependencies.sh` do próprio runner.
@@ -105,13 +106,13 @@ Modificar: `README.md` (Task 5).
 
 **Files:** criar `gancho-fim.sh`; criar `testes/test_gancho.sh`.
 **Regras:** design 4.4.
-- [ ] Testes:
+- [x] Testes:
   1. com `DOCKER_HOST` e `DOCKER_CMD compose ls -q` devolvendo `a` e `b`: chama `compose -p a down -v --remove-orphans`, idem `b`, depois `system prune -f --filter until=24h`, nessa ordem;
   2. sem `DOCKER_HOST`: nenhuma chamada ao Docker;
   3. grava uma linha em `LOG_FILE` com `AGORA`, `GITHUB_JOB`, `GITHUB_RUN_ID` e o disco livre do `DF_CMD`;
   4. `DOCKER_CMD` falhando: sai com 0 e a linha do log registra a falha;
   5. o texto do script não contém `/var/run/docker.sock` nem `sudo`.
-- [ ] Commit: `feat: gancho de fim de job derruba os compose do job e limpa o Docker rootless`.
+- [x] Commit: `feat: gancho de fim de job derruba os compose do job e limpa o Docker rootless`.
 
 ## Task 5: README final
 
