@@ -68,7 +68,7 @@ case "$tudo" in
       --listar) cat "$ctl/instancias" 2> /dev/null; exit 0 ;;
       --config)
         if [ -f "$ctl/config" ]; then cat "$ctl/config"
-        else printf 'RUNNER_URL=https://github.com/dono/repo\nRUNNER_ROTULOS=exemplo\nDOCKER_ROOTLESS=1\nRESERVA_MB=1024\nMEM_MIN_MB=2048\nMEMORY_MAX_MB=4096\nCPU_QUOTA=200\n'; fi
+        else printf 'RUNNER_URL=https://github.com/dono/repo\nRUNNER_ROTULOS=exemplo\nDOCKER_ROOTLESS=1\nRESERVA_MB=1024\nMEM_MIN_MB=2048\nMEMORY_MAX_MB=4096\nCPU_QUOTA=200\nJANELA=\nVALIDADE=\n'; fi
         exit 0 ;;
       --remover) echo 'REMOVIDO'; exit "$(cat "$ctl/remover" 2> /dev/null || echo 0)" ;;
       *) echo 'INSTALADO'; exit "$(cat "$ctl/instalar" 2> /dev/null || echo 0)" ;;
@@ -224,12 +224,15 @@ afirmar "instância existente: respondendo sim, segue com o mesmo nome" \
 
 # 7. opções avançadas
 novo_cenario
-codigo="$(assistente "${CONEXAO[@]}" dono/repo '' s abc 3072 'x%' 150 'a b' ci,gpu n s)"
+codigo="$(assistente "${CONEXAO[@]}" dono/repo '' s abc 3072 'x%' 150 'a b' ci,gpu 25:00-06:00 22:00-22:00 22:00-06:00 31/12/2999 2000-01-01 2999-02-30 2999-12-31 n s)"
 afirmar "avançado com valores válidos termina com 0" "$([ "$codigo" = 0 ] && echo 0 || echo 1)"
 instalacao="$(inst_stdin)"
 afirmar "MEMORY_MAX_MB, CPU_QUOTA, rótulos e DOCKER_ROOTLESS=0 vão para a instalação" \
   "$(grep -q 'export MEMORY_MAX_MB=3072' "$instalacao" && grep -q 'export CPU_QUOTA=150' "$instalacao" \
      && grep -q 'export RUNNER_ROTULOS=ci\\,gpu' "$instalacao" && grep -q 'export DOCKER_ROOTLESS=0' "$instalacao"; echo $?)"
+afirmar "JANELA e VALIDADE vão para a instalação" "$(grep -q 'export JANELA=22:00-06:00' "$instalacao" && grep -q 'export VALIDADE=2999-12-31' "$instalacao"; echo $?)"
+afirmar "janela e validade inválidas (25:00, início igual ao fim, 31/12, passada, 30 de fevereiro) repetiram a pergunta" \
+  "$(! grep -qE 'JANELA=(25|22:00-22:00)|VALIDADE=(31|2000|2999-02-30)' "$instalacao" && saida_tem "use HH:MM-HH:MM" && saida_tem "já passou" && saida_tem "use uma data válida"; echo $?)"
 afirmar "valores inválidos (abc, x%, 'a b') repetiram a pergunta" "$(! grep -qE 'MEMORY_MAX_MB=abc|CPU_QUOTA=x|ROTULOS=a\\ b' "$instalacao"; echo $?)"
 
 # 8. diagnóstico "não cabe"
@@ -569,7 +572,7 @@ afirmar "estado com duas instâncias: lista numerada, repete o inválido e escol
 # 29. menu: ver e alterar a configuração (sem token: reaplica com --sem-token)
 novo_cenario
 printf 'alfa\n' > "$TMP/ctl/instancias"
-codigo="$(assistente "${CONEXAO[@]}" 3 abc 0 3072 '' s)"
+codigo="$(assistente "${CONEXAO[@]}" 3 abc 0 3072 '' '' '' s)"
 afirmar "configurar: mostra a configuração gravada" \
   "$([ "$codigo" = 0 ] && saida_tem 'MEMORY_MAX_MB=4096' && saida_tem 'CPU_QUOTA=200' && saida_tem 'RUNNER_URL=https://github.com/dono/repo' && echo 0 || echo 1)"
 afirmar "configurar: os valores atuais são o padrão (Enter mantém)" "$(saida_tem 'Memória máxima do runner em MB [4096]' && saida_tem 'Cota de CPU em % de um núcleo [200]'; echo $?)"
@@ -584,26 +587,52 @@ afirmar_sem "$TMP/err" "$TOKEN_FALSO"
 
 novo_cenario
 printf 'alfa\n' > "$TMP/ctl/instancias"
-codigo="$(assistente "${CONEXAO[@]}" 3 '' '')"
+codigo="$(assistente "${CONEXAO[@]}" 3 '' '' '' '')"
 afirmar "configurar sem mudar nada: 'Nada a alterar', sem reaplicar e sai com 0" "$([ "$codigo" = 0 ] && saida_tem 'Nada a alterar' && ! instalou && echo 0 || echo 1)"
 novo_cenario
 printf 'alfa\n' > "$TMP/ctl/instancias"
-codigo="$(assistente "${CONEXAO[@]}" 3 2048 300 n)"
+codigo="$(assistente "${CONEXAO[@]}" 3 2048 300 '' '' n)"
 afirmar "configurar recusando a confirmação: nada é reaplicado (Enter/n = não)" "$([ "$codigo" = 0 ] && ! instalou && saida_tem 'Nada foi alterado' && echo 0 || echo 1)"
 novo_cenario
 printf 'alfa\n' > "$TMP/ctl/instancias"
-codigo="$(assistente "${CONEXAO[@]}" 3 2048 300 s)"
+codigo="$(assistente "${CONEXAO[@]}" 3 2048 300 '' '' s)"
 afirmar "configurar memória e CPU: as duas vão" \
   "$([ "$codigo" = 0 ] && grep -q 'export MEMORY_MAX_MB=2048' "$(grep -l MEMORY_MAX_MB "$TMP"/stdin.* | head -n 1)" && grep -q 'export CPU_QUOTA=300' "$(grep -l CPU_QUOTA "$TMP"/stdin.* | head -n 1)" && echo 0 || echo 1)"
 novo_cenario
 printf 'alfa\n' > "$TMP/ctl/instancias"
 echo 1 > "$TMP/ctl/instalar"
-codigo="$(assistente "${CONEXAO[@]}" 3 2048 '' s)"
+codigo="$(assistente "${CONEXAO[@]}" 3 2048 '' '' '' s)"
 afirmar "reaplicação falhando: sai com 1 e avisa" "$([ "$codigo" = 1 ] && saida_tem 'falhou' && echo 0 || echo 1)"
 novo_cenario
 printf 'alfa\n' > "$TMP/ctl/instancias"
-codigo="$(assistente "${CONEXAO[@]}" 3 512 '' s)"
+codigo="$(assistente "${CONEXAO[@]}" 3 512 '' '' '' s)"
 afirmar "memória abaixo de 1024 MB: avisa do risco, mas aceita" "$([ "$codigo" = 0 ] && saida_tem 'abaixo de 1024 MB' && instalou && echo 0 || echo 1)"
+
+# 29b. configurar: janela de horário e validade
+novo_cenario
+printf 'alfa\n' > "$TMP/ctl/instancias"
+codigo="$(assistente "${CONEXAO[@]}" 3 '' '' abc 25:00-06:00 22:00-22:00 22:00-06:00 31/12/2999 2000-01-01 2999-12-31 s)"
+afirmar "configurar janela e validade: conclui, reaplica sem token e mostra a janela e a validade nas perguntas" \
+  "$([ "$codigo" = 0 ] && instalou && ! gerou_token && saida_tem 'Janela de horário (HH:MM-HH:MM, horário da VPS; - remove)' && saida_tem 'Validade (AAAA-MM-DD; - remove)' && echo 0 || echo 1)"
+afirmar "só JANELA e VALIDADE vão (memória e CPU iguais ficam de fora) e as inválidas não chegam à VPS" \
+  "$(f="$(grep -l 'export JANELA=22:00-06:00' "$TMP"/stdin.* | head -n 1)"; grep -q 'export VALIDADE=2999-12-31' "$f" && ! grep -q 'MEMORY_MAX_MB\|CPU_QUOTA' "$f" && ! grep -lE 'JANELA=(abc|25|22:00-22:00)|VALIDADE=(31|2000)' "$TMP"/stdin.* > /dev/null 2>&1; echo $?)"
+afirmar "o resumo mostra de onde para onde" "$(saida_tem 'JANELA: (sempre ligado) -> 22:00-06:00' && saida_tem 'VALIDADE: (sem validade) -> 2999-12-31'; echo $?)"
+afirmar "o comando equivalente leva as variáveis" "$(saida_tem '--var JANELA=22:00-06:00' && saida_tem '--var VALIDADE=2999-12-31'; echo $?)"
+afirmar "o aviso diz que o horário é o da VPS" "$(saida_tem 'horário da VPS'; echo $?)"
+afirmar_sem "$TMP/out" "$TOKEN_FALSO"
+
+novo_cenario
+printf 'alfa\n' > "$TMP/ctl/instancias"
+printf 'RUNNER_URL=https://github.com/dono/repo\nMEMORY_MAX_MB=4096\nCPU_QUOTA=200\nJANELA=22:00-06:00\nVALIDADE=2999-12-31\n' > "$TMP/ctl/config"
+codigo="$(assistente "${CONEXAO[@]}" 3 '' '' '' '' s)"
+afirmar "com janela e validade gravadas, Enter mantém e não há o que alterar" "$([ "$codigo" = 0 ] && saida_tem 'Nada a alterar' && saida_tem 'Janela de horário (HH:MM-HH:MM, horário da VPS; - remove) [22:00-06:00]' && ! instalou && echo 0 || echo 1)"
+novo_cenario
+printf 'alfa\n' > "$TMP/ctl/instancias"
+printf 'RUNNER_URL=https://github.com/dono/repo\nMEMORY_MAX_MB=4096\nCPU_QUOTA=200\nJANELA=22:00-06:00\nVALIDADE=2999-12-31\n' > "$TMP/ctl/config"
+codigo="$(assistente "${CONEXAO[@]}" 3 '' '' - - s)"
+afirmar "'-' remove a janela e a validade: vão vazias e o resumo diz isso" \
+  "$([ "$codigo" = 0 ] && instalou && grep -q "export JANELA=''" "$(grep -l "export JANELA=''" "$TMP"/stdin.* | head -n 1)" && grep -lq "export VALIDADE=''" "$TMP"/stdin.* && saida_tem 'JANELA: 22:00-06:00 -> (sempre ligado)' && saida_tem 'VALIDADE: 2999-12-31 -> (sem validade)' && echo 0 || echo 1)"
+afirmar "o comando equivalente leva as variáveis vazias" "$(saida_tem '--var JANELA=' && saida_tem '--var VALIDADE='; echo $?)"
 
 # 30. menu: remover uma instância (token de remoção só depois da confirmação)
 novo_cenario

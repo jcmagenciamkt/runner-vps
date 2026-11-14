@@ -293,6 +293,44 @@ montar_base() {
   for v in "${extras[@]}"; do base+=(--var "$v"); done
 }
 
+# HH:MM-HH:MM (24 h), com início diferente do fim.
+valida_janela() { [[ "$1" =~ ^([01][0-9]|2[0-3]):[0-5][0-9]-([01][0-9]|2[0-3]):[0-5][0-9]$ ]] && [ "${1%-*}" != "${1#*-}" ]; }
+# AAAA-MM-DD válida (a data de hoje da máquina de quem administra; a VPS confere de novo com o relógio dela).
+valida_validade() { # devolve 0 válida e futura; 1 formato/data inválidos; 2 já passou
+  [[ "$1" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] && [ "$(date -d "$1" +%F 2> /dev/null || true)" = "$1" ] || return 1
+  if [[ "$(date +%F)" > "$1" ]]; then return 2; fi
+  return 0
+}
+# pedir_janela <variável> <padrão> <permite '-' para remover: 0|1>
+pedir_janela() {
+  local _alvo_pj="$1" _pad_pj="$2" _rm_pj="$3" _v_pj
+  local _txt_pj="Janela de horário (HH:MM-HH:MM, horário da VPS; vazio = sempre ligado)"
+  if [ "$_rm_pj" -eq 1 ]; then _txt_pj="Janela de horário (HH:MM-HH:MM, horário da VPS; - remove)"; fi
+  while :; do
+    pergunta _v_pj "$_txt_pj" "$_pad_pj"
+    if [ -z "$_v_pj" ] || { [ "$_rm_pj" -eq 1 ] && [ "$_v_pj" = - ]; } || valida_janela "$_v_pj"; then break; fi
+    aviso "use HH:MM-HH:MM (24 h), com início diferente do fim, ex.: 22:00-06:00."
+  done
+  if [ "$_v_pj" = - ]; then _v_pj=""; fi
+  printf -v "$_alvo_pj" '%s' "$_v_pj"
+}
+# pedir_validade <variável> <padrão> <permite '-' para remover: 0|1>
+pedir_validade() {
+  local _alvo_pv="$1" _pad_pv="$2" _rm_pv="$3" _v_pv _rc_pv
+  local _txt_pv="Validade (AAAA-MM-DD, o runner desliga no fim desse dia; vazio = sem validade)"
+  if [ "$_rm_pv" -eq 1 ]; then _txt_pv="Validade (AAAA-MM-DD; - remove)"; fi
+  while :; do
+    pergunta _v_pv "$_txt_pv" "$_pad_pv"
+    if [ -z "$_v_pv" ] || { [ "$_rm_pv" -eq 1 ] && [ "$_v_pv" = - ]; }; then break; fi
+    _rc_pv=0; valida_validade "$_v_pv" || _rc_pv=$?
+    if [ "$_rc_pv" -eq 0 ]; then break; fi
+    if [ "$_rc_pv" -eq 2 ]; then aviso "essa data já passou (hoje é $(date +%F)): informe uma data futura."
+    else aviso "use uma data válida AAAA-MM-DD, ex.: 2026-12-31."; fi
+  done
+  if [ "$_v_pv" = - ]; then _v_pv=""; fi
+  printf -v "$_alvo_pv" '%s' "$_v_pv"
+}
+
 # Valor de uma chave num texto CHAVE=valor (uma por linha); vazio se não houver.
 valor_de() { # <chave> <texto>
   local linha
@@ -322,7 +360,7 @@ escolher_instancia() { # <lista>
 # Mostra a configuração gravada da instância $nome, pergunta o que mudar (só o que não precisa de token) e
 # reaplica com --sem-token. Usa as variáveis do assistente (base, self).
 configurar_instancia() {
-  local cfg linha mem_atual cpu_atual mem_nova cpu_nova v
+  local cfg linha mem_atual cpu_atual mem_nova cpu_nova v janela_atual validade_atual janela_nova validade_nova
   local -a mudancas=() vars=() args=()
   if ! cfg="$(bash "$self" "${base[@]}" --nome "$nome" --config --quieto < /dev/null 2>&1)"; then
     printf '%s\n' "$cfg" >&2; erro "não consegui ler a configuração de $nome." 1
@@ -342,11 +380,20 @@ configurar_instancia() {
     aviso "use um número inteiro maior que zero, ex.: 200."
   done
   cpu_nova="${cpu_nova%\%}"
+  janela_atual="$(valor_de JANELA "$cfg")"; validade_atual="$(valor_de VALIDADE "$cfg")"
+  pedir_janela janela_nova "$janela_atual" 1
+  pedir_validade validade_nova "$validade_atual" 1
   if [ -n "$mem_nova" ] && [ "$mem_nova" != "$mem_atual" ]; then
     vars+=("MEMORY_MAX_MB=$mem_nova"); mudancas+=("MEMORY_MAX_MB: ${mem_atual:-(calculado)} -> $mem_nova")
   fi
   if [ -n "$cpu_nova" ] && [ "$cpu_nova" != "$cpu_atual" ]; then
     vars+=("CPU_QUOTA=$cpu_nova"); mudancas+=("CPU_QUOTA: ${cpu_atual:-(calculado)} -> $cpu_nova")
+  fi
+  if [ "$janela_nova" != "$janela_atual" ]; then
+    vars+=("JANELA=$janela_nova"); mudancas+=("JANELA: ${janela_atual:-(sempre ligado)} -> ${janela_nova:-(sempre ligado)}")
+  fi
+  if [ "$validade_nova" != "$validade_atual" ]; then
+    vars+=("VALIDADE=$validade_nova"); mudancas+=("VALIDADE: ${validade_atual:-(sem validade)} -> ${validade_nova:-(sem validade)}")
   fi
   if [ "${#vars[@]}" -eq 0 ]; then printf '\nNada a alterar.\n'; return 0; fi
   if [ -n "$mem_nova" ] && [ "$mem_nova" -lt 1024 ]; then
@@ -497,7 +544,7 @@ avaliar_painel() {
 
 assistente() {
   local mem="" cpu="" rot="" self="${BASH_SOURCE[0]}" alvo_texto padrao_nome resposta v
-  local saida saida_ok reserva=1024 minimo=2048 lista
+  local saida saida_ok reserva=1024 minimo=2048 lista janela="" validade=""
   local -a novos=()
   local -a base=() alvo=()
 
@@ -586,9 +633,13 @@ assistente() {
       if [ -z "$rot" ] || [[ "$rot" =~ ^[A-Za-z0-9._-]+(,[A-Za-z0-9._-]+)*$ ]]; then break; fi
       aviso "use rótulos simples separados por vírgula, sem espaços."
     done
+    pedir_janela janela "" 0
+    pedir_validade validade "" 0
     [ -z "$mem" ] || extras+=("MEMORY_MAX_MB=$mem")
     [ -z "$cpu" ] || extras+=("CPU_QUOTA=${cpu%\%}")
     [ -z "$rot" ] || rotulos="$rot"
+    [ -z "$janela" ] || extras+=("JANELA=$janela")
+    [ -z "$validade" ] || extras+=("VALIDADE=$validade")
     sim_nao "Instalar o Docker rootless do runner?" s || sem_docker=1
   fi
 
