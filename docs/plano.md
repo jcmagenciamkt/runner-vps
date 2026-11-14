@@ -247,6 +247,17 @@ Modificar: `README.md` (Task 5).
 - [x] README e design.
 - [x] Commit: `feat: janela de horário e validade do runner (timers do systemd), no instalador e no assistente`.
 
+## Task 15: instalar nesta máquina (`--local`) e vários repositórios (`--repos`)
+
+**Files:** modificar `registrar.sh`, `testes/test_assistente.sh`, criar `testes/test_local_e_lote.sh`, `README.md`, `docs/design.md`.
+**Regras:** design 4.6b. O token só vai pelo stdin do shell local; o `sudo` é só do instalador; o runner continua sem sudo.
+- [x] Testes primeiro (`test_local_e_lote.sh`, com `gh`, `ssh`, `sudo`, shell local e `uname` falsos): `--local` como root (sem ssh, sem sudo, token no stdin e ausente de saída, erro e argumentos), sem ser root (usa sudo; sem sudo: saída 1 antes do token), fora do Linux (saída 1), `--local` com `--vps`/`--chave` (saída 2), todos os modos locais, `--mostrar`; `--repos` (painel uma vez e antes dos tokens, nomes derivados, memória dividida em múltiplos de 256, mínimo, `--var` explícito sem painel, servidor que não cabe, falha no meio, `--local --repos`, e todas as combinações recusadas com saída 2).
+- [x] Testes do assistente: `local` no servidor e `--local` (sem tcp nem teste de conexão, resumo "esta máquina", comando equivalente com `--local`, painel antes do token, fora do Linux, `--local` com `--vps`, menu com instâncias, instância existente checada localmente, sudo só no instalador).
+- [x] Implementar `checar_local`, `--local`, `--repos` e `lote` no `registrar.sh`; `ssh_assistente` local; `local` em `pedir_servidor`.
+- [x] Mutação: 11 mutantes do `--local`/`--repos`; o que sobreviveu (vírgula no fim de `--repos`) ganhou teste.
+- [x] README e design.
+- [x] Commit: `feat: --local (instalar nesta máquina) e --repos (uma instância por repositório)`.
+
 ## Fecho
 
 - [x] `shellcheck` limpo e `testes/rodar.sh` verde, local e no CI do projeto.

@@ -14,11 +14,20 @@
 #   registrar.sh --vps … --nome <nome> --sem-token --var CHAVE=valor   altera a configuração (sem token)
 #   registrar.sh --vps … (--repo|--org) --nome <nome> --remover   desfaz a instância (token de remoção)
 #   registrar.sh --vps … --nome <nome> --sem-token        reinstala/atualiza sem registrar de novo
+#   registrar.sh --local (--repo <dono>/<repo> | --org <org>) --nome <nome> [opções]
+#                                                         instala nesta própria máquina (Linux), sem SSH
+#   registrar.sh (--vps … | --local) --repos <dono>/<a>,<dono>/<b> [opções]
+#                                                         uma instância por repositório, numa passada;
+#                                                         o nome vem do repositório e a memória é dividida
 #   registrar.sh --interativo                             assistente: pergunta e valida; sem argumentos
 #                                                         num terminal, é o que acontece
 #
 # Opções:
 #   --chave <arquivo>        chave privada do SSH (-i)
+#   --local                  em vez de --vps: roda o instalador nesta máquina (precisa de Linux e de root
+#                            ou sudo, só para o instalador; o runner continua sem sudo)
+#   --repos a/x,b/y          vários repositórios de uma vez (só instalar; não combina com --repo, --org,
+#                            --nome, --nome-github, --status, --so-checar, --remover nem --mostrar)
 #   --rotulos a,b            rótulos do runner (padrão: o nome)
 #   --nome-github <nome>     nome do runner no GitHub, se diferente de --nome
 #   --sem-docker             DOCKER_ROOTLESS=0
@@ -33,7 +42,8 @@
 # Pré-requisitos: gh autenticado (gh auth status) com acesso de administrador ao repositório
 # (ou à organização), ssh, e o instalar.sh ao lado deste script.
 #
-# Variáveis só de teste (padrão: o comando real): GH_CMD, SSH_CMD, TCP_CMD, INSTALAR_SH, SSH_CONFIG_FILE.
+# Variáveis só de teste (padrão: o comando real): GH_CMD, SSH_CMD, TCP_CMD, INSTALAR_SH, SSH_CONFIG_FILE,
+# BASH_LOCAL_CMD, SUDO_CMD, UNAME_CMD, UID_ATUAL.
 set -euo pipefail
 
 aqui="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -41,6 +51,11 @@ gh_cmd="${GH_CMD:-gh}"
 ssh_cmd="${SSH_CMD:-ssh}"
 tcp_cmd="${TCP_CMD:-tcp_ssh}"
 instalar="${INSTALAR_SH:-$aqui/instalar.sh}"
+bash_local="${BASH_LOCAL_CMD:-bash}"
+sudo_cmd="${SUDO_CMD:-sudo}"
+uname_cmd="${UNAME_CMD:-uname}"
+uid_atual="${UID_ATUAL:-$EUID}"
+self="${BASH_SOURCE[0]}"
 
 uso() { sed -n '2,/^set -euo/{/^set -euo/!p;}' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 erro() { printf 'registrar.sh: %s\n' "$*" >&2; exit "${2:-2}"; }
@@ -48,7 +63,7 @@ quieto=0
 passo() { if [ "$quieto" -eq 0 ]; then printf '==> %s\n' "$*"; fi; }
 
 vps=""; chave=""; repo=""; org=""; nome=""; nome_github=""; rotulos=""
-modo="instalar"; sem_docker=0; mostrar=0; interativo=0
+modo="instalar"; sem_docker=0; mostrar=0; interativo=0; local_=0; repos=""
 n_args=$#
 declare -a extras=()
 
@@ -56,6 +71,8 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --vps) vps="${2:-}"; shift 2 ;;
     --chave) chave="${2:-}"; shift 2 ;;
+    --local) local_=1; shift ;;
+    --repos) repos="${2:-}"; shift 2 ;;
     --repo) repo="${2:-}"; shift 2 ;;
     --org) org="${2:-}"; shift 2 ;;
     --nome) nome="${2:-}"; shift 2 ;;
@@ -212,7 +229,8 @@ pedir_servidor() {
     done
   fi
   while :; do
-    pergunta entrada "Servidor: IP ou nome do host (ou um Host do seu ~/.ssh/config)"
+    pergunta entrada "Servidor: IP ou nome do host (ou um Host do seu ~/.ssh/config); \"local\" instala nesta máquina"
+    if [ "$entrada" = local ]; then local_=1; return 0; fi
     if ! valida_host "$entrada"; then continue; fi
     if resolvido="$(alias_do_ssh_config "$entrada")"; then
       printf '  Achei "%s" no ~/.ssh/config: %s. Usuário, porta e chave vêm de lá.\n' "$entrada" "$resolvido"
@@ -253,7 +271,21 @@ valida_nome() {
   [[ "$1" =~ ^[a-z0-9-]+$ ]] || { aviso "o nome só aceita letras minúsculas, números e hífen."; return 1; }
 }
 
+# --local: só Linux, e root ou sudo (o sudo é só para o instalador; o runner nunca recebe sudo).
+checar_local() {
+  [ "$("$uname_cmd" -s)" = Linux ] || erro "--local só funciona em Linux (o instalador usa systemd e usuários do sistema). Em outra máquina, use --vps." 1
+  if [ "$uid_atual" -ne 0 ]; then
+    command -v "$sudo_cmd" > /dev/null 2>&1 || erro "--local precisa de root ou de sudo (só para o instalador): rode como root ou instale o sudo." 1
+  fi
+}
+
 ssh_assistente() { # <comando remoto…>; sem terminal, sem senha (BatchMode)
+  if [ "$local_" -eq 1 ]; then # mesma pergunta, feita nesta máquina
+    local -a pre=()
+    if [ "$uid_atual" -ne 0 ]; then pre=("$sudo_cmd"); fi
+    "${pre[@]}" "$bash_local" -c "$*" < /dev/null
+    return
+  fi
   local -a a=()
   [ -z "$chave" ] || a+=(-i "$chave")
   [ -z "$vps_porta" ] || a+=(-p "$vps_porta")
@@ -283,7 +315,7 @@ valida_alvo() { # usa $repo ou $org; confere se o gh é administrador
 # Monta, no array $base do chamador, os argumentos comuns às chamadas ao próprio script (nunca contêm o token).
 montar_base() {
   local v
-  base=(--vps "$vps")
+  if [ "$local_" -eq 1 ]; then base=(--local); else base=(--vps "$vps"); fi
   # (com "servidor" o nome fica de fora: é o painel que roda antes de a instância existir)
   if [ "${1:-}" != servidor ] && [ -n "$nome" ]; then base+=(--nome "$nome"); fi
   [ -z "$chave" ] || base+=(--chave "$chave")
@@ -567,8 +599,17 @@ assistente() {
   done
 
   # 1. VPS e chave, com teste de conexão de verdade.
+  if [ "$local_" -eq 1 ]; then
+    [ -z "$vps" ] || erro "--local e --vps não combinam: --local instala nesta máquina, --vps em outra"
+    [ -z "$chave" ] || erro "--local não usa SSH, então não aceita --chave"
+  fi
   while :; do
-    if [ -z "$vps" ]; then pedir_servidor; fi
+    if [ "$local_" -eq 0 ] && [ -z "$vps" ]; then pedir_servidor; fi
+    if [ "$local_" -eq 1 ]; then
+      checar_local
+      printf 'Instalando nesta máquina (Linux); o sudo, se preciso, é só para o instalador.\n'
+      break
+    fi
     define_destino
     printf 'Testando a conexão com %s...\n' "$vps"
     if ssh_assistente true > /dev/null 2>&1; then printf '  ok\n'; break; fi
@@ -610,7 +651,7 @@ assistente() {
       if ! valida_nome "$nome"; then nome=""; continue; fi
     fi
     if ssh_assistente "test -e /etc/runner-vps/$nome.conf" > /dev/null 2>&1; then
-      if sim_nao "Já existe uma instância \"$nome\" nessa VPS. Reaplicar por cima (é idempotente)?" n; then break; fi
+      if sim_nao "Já existe uma instância \"$nome\" nesse servidor. Reaplicar por cima (é idempotente)?" n; then break; fi
       nome=""; continue
     fi
     break
@@ -649,7 +690,7 @@ assistente() {
   montar_base
 
   # 6. Resumo e confirmação.
-  printf '\nResumo:\n  VPS:        %s\n  Alvo:       %s\n  Instância:  %s (usuário runner-%s na VPS)\n' "$vps" "$alvo_texto" "$nome" "$nome"
+  printf '\nResumo:\n  Onde:       %s\n  Alvo:       %s\n  Instância:  %s (usuário runner-%s)\n' "$([ "$local_" -eq 1 ] && echo 'esta máquina' || echo "VPS $vps")" "$alvo_texto" "$nome" "$nome"
   printf '  Docker rootless: %s\n' "$([ "$sem_docker" -eq 0 ] && echo sim || echo não)"
   if [ "${#extras[@]}" -gt 0 ]; then printf '  Ajustes:    %s\n' "${extras[*]}"; fi
   if ! sim_nao "Instalar agora?" n; then
@@ -675,9 +716,14 @@ if [ "$interativo" -eq 1 ]; then
   exit 0
 fi
 
-[ -n "$vps" ] || erro "falta --vps root@<vps>[:porta] (ou use --interativo)"
+if [ "$local_" -eq 1 ]; then
+  [ -z "$vps" ] || erro "--local e --vps não combinam: --local instala nesta máquina, --vps em outra"
+  [ -z "$chave" ] || erro "--local não usa SSH, então não aceita --chave"
+else
+  [ -n "$vps" ] || erro "falta --vps root@<vps>[:porta], --local ou --interativo"
+fi
 # O painel do servidor (--so-checar) e a lista (--listar) dispensam o nome da instância; os demais modos exigem.
-if [ -n "$nome" ] || { [ "$modo" != so-checar ] && [ "$modo" != listar ]; }; then
+if [ -z "$repos" ] && { [ -n "$nome" ] || { [ "$modo" != so-checar ] && [ "$modo" != listar ]; }; }; then
   [ -n "$nome" ] || erro "falta --nome <nome>"
   [[ "$nome" =~ ^[a-z0-9-]+$ ]] || erro "--nome só aceita [a-z0-9-]: $nome"
 fi
@@ -686,6 +732,84 @@ for v in "${extras[@]}"; do
   [[ "$v" =~ ^[A-Z][A-Z0-9_]*=.*$ ]] || erro "--var espera CHAVE=valor, com a chave em maiúsculas: $v"
   [[ "$v" != RUNNER_TOKEN=* ]] || erro "não passe RUNNER_TOKEN por --var: o script gera o token"
 done
+
+# ---------- vários repositórios de uma vez ----------
+# Uma instância por repositório, com o nome derivado do repositório. O painel do servidor roda uma vez,
+# antes de qualquer token; a memória que o painel diz que cabe é dividida em partes iguais (múltiplos de
+# 256 MB) e cada instância recebe a sua fatia por MEMORY_MAX_MB. Cada instalação é uma chamada deste mesmo
+# script, com o seu próprio token; a primeira que falhar interrompe o lote.
+lote() {
+  local r n i total min por_instancia saida resto
+  local -a itens=() nomes=() novos=() feitas=() restantes=() base=() extras_orig=()
+  [ "$modo" = instalar ] || erro "--repos só serve para instalar (sem --status, --so-checar, --listar, --config, --remover ou --sem-token)"
+  [ -z "$repo" ] && [ -z "$org" ] || erro "--repos não combina com --repo nem --org"
+  [ -z "$nome" ] || erro "--repos não combina com --nome: o nome de cada instância vem do repositório"
+  [ -z "$nome_github" ] || erro "--repos não combina com --nome-github: cada instância precisa de um nome próprio no GitHub"
+  [ "$mostrar" -eq 0 ] || erro "--repos não combina com --mostrar: rode com um repositório só para ver o que seria enviado"
+  case "$repos" in ,* | *, | *,,*) erro "--repos tem um item vazio: $repos" ;; esac
+  IFS=, read -r -a itens <<< "$repos"
+  [ "${#itens[@]}" -ge 1 ] || erro "--repos está vazio"
+  for r in "${itens[@]}"; do
+    [[ "$r" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || erro "--repos espera <dono>/<repo> separados por vírgula: $r"
+    n="${r#*/}"; n="${n,,}"; n="${n//[^a-z0-9]/-}"
+    while [[ "$n" == -* ]]; do n="${n#-}"; done
+    while [[ "$n" == *- ]]; do n="${n%-}"; done
+    [ -n "$n" ] || erro "não consegui derivar um nome para $r: rode esse repositório sozinho, com --nome"
+    for i in "${nomes[@]}"; do
+      [ "$i" != "$n" ] || erro "dois repositórios dariam o mesmo nome de instância ($n): rode um deles sozinho, com --nome"
+    done
+    nomes+=("$n")
+  done
+
+  extras_orig=("${extras[@]}")
+  min=2048; por_instancia=""
+  for r in "${extras[@]}"; do
+    case "$r" in MEM_MIN_MB=*) min="${r#*=}" ;; MEMORY_MAX_MB=*) por_instancia="${r#*=}" ;; esac
+  done
+  if [ -z "$por_instancia" ]; then
+    montar_base servidor
+    local ok=1
+    saida="$(bash "$self" "${base[@]}" --so-checar --quieto < /dev/null 2>&1)" || ok=0
+    printf '%s\n' "$saida"
+    [ "$ok" -eq 1 ] || erro "o veredito é \"não cabe\" (ou o painel falhou); nada foi instalado." 1
+    total="$(sed -n 's/^VEREDITO: cabe (MemoryMax=\([0-9][0-9]*\)M.*/\1/p' <<< "$saida" | head -n 1)"
+    [ -n "$total" ] || erro "não consegui ler a memória disponível no painel da VPS; nada foi instalado." 1
+    por_instancia=$((total / ${#itens[@]} / 256 * 256))
+    if [ "$por_instancia" -lt "$min" ]; then
+      erro "não cabe para ${#itens[@]} instâncias: cada uma teria ${por_instancia} MB (de ${total} MB), abaixo do mínimo de ${min} MB. Use menos repositórios, uma VPS maior ou baixe o mínimo com --var MEM_MIN_MB=<MB> (jobs com Docker pedem pelo menos 1024). Nada foi instalado." 1
+    fi
+    for r in "${extras[@]}"; do novos+=("$r"); done
+    extras=("${novos[@]}" "MEMORY_MAX_MB=$por_instancia")
+  fi
+
+  printf '\nInstâncias a instalar (%d), com MemoryMax=%sM cada:\n' "${#itens[@]}" "$por_instancia"
+  for i in "${!itens[@]}"; do printf '  %s  <-  %s\n' "${nomes[$i]}" "${itens[$i]}"; done
+  printf '\n'
+
+  restantes=("${nomes[@]}")
+  for i in "${!itens[@]}"; do
+    nome="${nomes[$i]}"
+    montar_base
+    local -a q=()
+    [ "$quieto" -eq 0 ] || q=(--quieto)
+    if ! bash "$self" "${base[@]}" --repo "${itens[$i]}" "${q[@]}" < /dev/null; then
+      restantes=("${restantes[@]:1}")
+      resto="${restantes[*]}"
+      printf 'registrar.sh: a instalação falhou em %s.\n' "${itens[$i]}" >&2
+      printf 'registrar.sh: instaladas: %s\n' "${feitas[*]:-nenhuma}" >&2
+      printf 'registrar.sh: não tentadas: %s\n' "${resto:-nenhuma}" >&2
+      exit 1
+    fi
+    feitas+=("$nome"); restantes=("${restantes[@]:1}")
+  done
+  extras=("${extras_orig[@]}")
+  printf 'Lote concluído: %s.\n' "${feitas[*]}"
+}
+
+if [ -n "$repos" ]; then lote; exit 0; fi
+
+# ---------- execução local ----------
+if [ "$local_" -eq 1 ] && [ "$mostrar" -eq 0 ]; then checar_local; fi
 
 # Destino: user@host[:porta]
 host="$vps"; porta=""
@@ -747,18 +871,25 @@ case "$modo" in
   remover) argumento="--remover" ;;
 esac
 
-declare -a ssh_args=()
-[ -z "$chave" ] || ssh_args+=(-i "$chave")
-[ -z "$porta" ] || ssh_args+=(-p "$porta")
-ssh_args+=(-o BatchMode=yes "$host" "bash -s -- $argumento")
+declare -a ssh_args=() cmd_exec=()
+if [ "$local_" -eq 1 ]; then
+  if [ "$uid_atual" -ne 0 ]; then cmd_exec+=("$sudo_cmd"); fi
+  cmd_exec+=("$bash_local" -s --)
+  [ -z "$argumento" ] || cmd_exec+=("$argumento")
+else
+  [ -z "$chave" ] || ssh_args+=(-i "$chave")
+  [ -z "$porta" ] || ssh_args+=(-p "$porta")
+  ssh_args+=(-o BatchMode=yes "$host" "bash -s -- $argumento")
+  cmd_exec=("$ssh_cmd" "${ssh_args[@]}")
+fi
 
 if [ "$mostrar" -eq 1 ]; then
-  passo "Comando: $ssh_cmd ${ssh_args[*]}"
+  passo "Comando: ${cmd_exec[*]}"
   passo "Entrada (depois destas linhas vai o instalar.sh):"
   montar_env 1
   exit 0
 fi
 
-passo "Enviando o instalar.sh para $host ($modo)"
-# O token entra só aqui, pelo stdin do ssh: não há linha de comando nem arquivo com ele.
-{ montar_env 0; cat "$instalar"; } | "$ssh_cmd" "${ssh_args[@]}"
+if [ "$local_" -eq 1 ]; then passo "Rodando o instalar.sh nesta máquina ($modo)"; else passo "Enviando o instalar.sh para $host ($modo)"; fi
+# O token entra só aqui, pelo stdin do ssh (ou do shell local): não há linha de comando nem arquivo com ele.
+{ montar_env 0; cat "$instalar"; } | "${cmd_exec[@]}"

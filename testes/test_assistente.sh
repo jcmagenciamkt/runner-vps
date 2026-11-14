@@ -686,4 +686,58 @@ codigo="$(cd "$TMP/cwd" && printf '%s\n' "${CONEXAO[@]}" dono/repo '' n s | HOME
 afirmar "execução completa do assistente sai com 0" "$([ "$codigo" = 0 ] && echo 0 || echo 1)"
 afirmar "não deixou arquivo no HOME nem no diretório atual" "$([ -z "$(find "$TMP/casa" "$TMP/cwd" -type f)" ] && echo 0 || echo 1)"
 
+# 14. instalar nesta máquina ("local"): sem SSH, sem teste de conexão, com o mesmo painel e o mesmo token só no stdin
+cat > "$TMP/bin/shell-local" <<'CORPO'
+#!/usr/bin/env bash
+# bash falso da máquina local: repassa ao ssh falso (que decide pelo texto do comando)
+case "$1" in
+  -s) shift 2; exec "$TMP/bin/ssh" "bash -s -- $*" ;;
+  -c) exec "$TMP/bin/ssh" "$2" ;;
+esac
+CORPO
+printf '#!/usr/bin/env bash\necho Linux\n' > "$TMP/bin/uname-linux"
+printf '#!/usr/bin/env bash\necho Darwin\n' > "$TMP/bin/uname-mac"
+chmod +x "$TMP/bin/shell-local" "$TMP/bin/uname-linux" "$TMP/bin/uname-mac"
+export BASH_LOCAL_CMD="$TMP/bin/shell-local" UNAME_CMD="$TMP/bin/uname-linux" UID_ATUAL=0
+
+novo_cenario
+codigo="$(assistente local dono/repo '' n s)"
+afirmar "'local' no servidor: instala (saída 0), sem tcp e sem teste de conexão por ssh" \
+  "$([ "$codigo" = 0 ] && instalou && ! houve '^tcp ' && ! houve '^ssh (-o|true)' && echo 0 || echo 1)"
+afirmar "o resumo diz 'esta máquina' e o comando equivalente leva --local, sem --vps" \
+  "$(saida_tem 'Onde:       esta máquina' && saida_tem '--local' && ! saida_tem '--vps'; echo $?)"
+afirmar "o painel do servidor rodou antes de gerar o token" "$([ "$(linha_de 'bash -s -- --so-checar')" -lt "$(linha_de 'registration-token')" ] && echo 0 || echo 1)"
+afirmar "o token só vai no stdin da instalação e não aparece na saída" \
+  "$(f="$(inst_stdin)"; [ -n "$f" ] && ! grep -q "$TOKEN_FALSO" "$TMP/out" "$TMP/err" "$TMP/chamadas.log"; echo $?)"
+
+novo_cenario
+codigo="$(assistente dono/repo '' n s -- --local)"
+afirmar "--local por argumento: pula a pergunta do servidor e instala" "$([ "$codigo" = 0 ] && ! saida_tem 'Servidor:' && instalou && echo 0 || echo 1)"
+
+novo_cenario
+codigo="$(UNAME_CMD="$TMP/bin/uname-mac" assistente dono/repo '' n s -- --local)"
+afirmar "fora do Linux: saída 1, explica e não gera token nem instala" "$([ "$codigo" = 1 ] && saida_tem 'Linux' && ! instalou && ! gerou_token && echo 0 || echo 1)"
+
+novo_cenario
+codigo="$(assistente dono/repo '' n s -- --local --vps root@v)"
+afirmar "--local com --vps: saída 2" "$([ "$codigo" = 2 ] && ! instalou && echo 0 || echo 1)"
+
+novo_cenario
+printf 'beta\n' > "$TMP/ctl/instancias"
+codigo="$(assistente 1 dono/repo '' n s -- --local)"
+afirmar "--local com instâncias já existentes: o menu aparece (listar via shell local) e a opção 1 instala" "$([ "$codigo" = 0 ] && saida_tem 'beta' && instalou && echo 0 || echo 1)"
+
+novo_cenario
+echo repo > "$TMP/ctl/existentes"
+codigo="$(assistente dono/repo '' n outro n s -- --local)"
+afirmar "--local, instância existente: a checagem roda nesta máquina e o nome novo é usado" \
+  "$([ "$codigo" = 0 ] && saida_tem 'Já existe' && houve 'test -e /etc/runner-vps/outro.conf' && grep -q 'export RUNNER_NOME=outro' "$(inst_stdin)" && echo 0 || echo 1)"
+
+printf '#!/usr/bin/env bash\nprintf "sudo %%s\\n" "$*" >> "$TMP/chamadas.log"\nexec "$@"\n' > "$TMP/bin/sudo-falso"; chmod +x "$TMP/bin/sudo-falso"
+novo_cenario
+echo repo > "$TMP/ctl/existentes"
+codigo="$(UID_ATUAL=1000 SUDO_CMD="$TMP/bin/sudo-falso" assistente dono/repo '' s n s -- --local)"
+afirmar "--local sem ser root: o sudo só envolve o instalador e a checagem; o token não vai para o sudo" \
+  "$([ "$codigo" = 0 ] && houve '^sudo .*shell-local -s --' && houve '^sudo .*shell-local -c test -e' && ! grep -q "$TMP/bin/sudo-falso.*$TOKEN_FALSO" "$TMP/chamadas.log" && ! grep -q "^sudo .*$TOKEN_FALSO" "$TMP/chamadas.log" && echo 0 || echo 1)"
+
 relatorio "assistente interativo"
