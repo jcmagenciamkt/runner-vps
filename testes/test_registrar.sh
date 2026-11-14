@@ -114,5 +114,10 @@ afirmar "instalar.sh ausente: saída 1" "$([ "$codigo" = 1 ] && echo 0 || echo 1
 # 11. o texto do script não ecoa o token
 afirmar "registrar.sh não contém 'echo \"\$token' nem set -x" "$(! grep -qE 'echo .*\$token|set -x' "$script"; echo $?)"
 
+# 12. os scripts de entrada são executáveis (o README manda rodar ./registrar.sh)
+for f in registrar.sh instalar.sh gancho-fim.sh; do
+  afirmar "$f tem o bit de execução" "$([ -x "$aqui/../$f" ] && echo 0 || echo 1)"
+done
+
 if [ "$falhas" -eq 0 ]; then echo "registrar.sh: tudo certo"; exit 0; fi
 echo "registrar.sh: $falhas falha(s)"; exit 1
