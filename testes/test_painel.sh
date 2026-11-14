@@ -148,4 +148,26 @@ afirmar "sem systemd: nenhum useradd" test "$(grep -c '^useradd' "$TMP/chamadas.
 afirmar_sem "$TMP/out" "$TOKEN_FALSO"
 afirmar_sem "$TMP/err" "$TOKEN_FALSO"
 
+echo "painel: quanto falta de memória"
+MEM_TOTAL_MB=3915 MEM_LIVRE_MB=1839 CPUS=2 nova_vps; painel; codigo=$?
+afirmar "memória insuficiente: saída 1" test "$codigo" -eq 1
+afirmar "mostra quanto sobraria e o mínimo" saida_tem 'memória insuficiente: sobrariam 768 MB para o runner (mínimo 2048 MB)'
+afirmar "mostra quanto seria necessário e quanto falta" saida_tem 'seriam necessários 3072 MB disponíveis (faltam 1233 MB)'
+afirmar "cita a reserva e as outras instâncias usadas na conta" saida_tem 'Com a reserva de 1024 MB e 0 MB de outras instâncias'
+afirmar "a linha de números vem antes do veredito" test "$(linha 'memória insuficiente')" -lt "$(linha 'VEREDITO:')"
+afirmar "o veredito continua sendo a última linha" grep -q '^VEREDITO: não cabe: memória' <<< "$(ultima_linha)"
+RESERVA_MB=256 MEM_MIN_MB=1536 painel; codigo=$?
+afirmar "com reserva e mínimo menores, cabe (saída 0)" test "$codigo" -eq 0
+afirmar "e a linha de números não aparece" test "$(grep -c 'memória insuficiente' "$TMP/out")" -eq 0
+nova_vps; painel
+afirmar "VPS com folga: sem linha de memória insuficiente" test "$(grep -c 'memória insuficiente' "$TMP/out")" -eq 0
+DISCO_LIVRE_GB=3 nova_vps; painel; codigo=$?
+afirmar "não cabe só por disco: sem linha de memória insuficiente" test "$codigo" -eq 1 -a "$(grep -c 'memória insuficiente' "$TMP/out")" -eq 0
+
+MEM_LIVRE_MB=4096 nova_vps
+instalar_instancia outra "$OUTRA_URL"; c=$?
+painel; codigo=$?
+afirmar "com outra instância (2048 MB) já instalada: a conta a inclui" test "$c" -eq 0 -a "$codigo" -eq 1
+afirmar "a conta soma mínimo, reserva e as outras instâncias" saida_tem 'Com a reserva de 1024 MB e 2048 MB de outras instâncias, seriam necessários 5120 MB disponíveis (faltam 1024 MB)'
+
 relatorio "painel de decisão"

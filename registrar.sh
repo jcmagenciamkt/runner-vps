@@ -24,6 +24,7 @@
 #                            EXTRAS_SH, EXTRAS_SHA256, ENV_EXTRAS, RUNNER_VERSAO, RUNNER_SHA256
 #   --mostrar                imprime o que seria enviado (token redigido) e não conecta
 #   --interativo             assistente para instalar (argumentos já passados pulam as perguntas)
+#   --quieto                 não imprime as linhas de andamento (==>); só o que o instalador responde
 #   -h, --help
 #
 # Pré-requisitos: gh autenticado (gh auth status) com acesso de administrador ao repositório
@@ -40,7 +41,8 @@ instalar="${INSTALAR_SH:-$aqui/instalar.sh}"
 
 uso() { sed -n '2,/^set -euo/{/^set -euo/!p;}' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 erro() { printf 'registrar.sh: %s\n' "$*" >&2; exit "${2:-2}"; }
-passo() { printf '==> %s\n' "$*"; }
+quieto=0
+passo() { if [ "$quieto" -eq 0 ]; then printf '==> %s\n' "$*"; fi; }
 
 vps=""; chave=""; repo=""; org=""; nome=""; nome_github=""; rotulos=""
 modo="instalar"; sem_docker=0; mostrar=0; interativo=0
@@ -64,6 +66,7 @@ while [ $# -gt 0 ]; do
     --sem-token) modo="sem-token"; shift ;;
     --mostrar) mostrar=1; shift ;;
     --interativo) interativo=1; shift ;;
+    --quieto) quieto=1; shift ;;
     -h | --help) uso; exit 0 ;;
     *) erro "opção desconhecida: $1 (veja --help)" ;;
   esac
@@ -77,11 +80,12 @@ aviso() { printf '  ! %s\n' "$*" >&2; }
 fim_da_entrada() { printf '\n'; erro "entrada encerrada; nada foi instalado." 1; }
 
 pergunta() { # <variável> <texto> [padrão]
-  local destino="$1" texto="$2" padrao="${3:-}" resposta
-  if [ -n "$padrao" ]; then printf '%s [%s]: ' "$texto" "$padrao"; else printf '%s: ' "$texto"; fi
-  IFS= read -r resposta || fim_da_entrada
-  [ -n "$resposta" ] || resposta="$padrao"
-  printf -v "$destino" '%s' "$resposta"
+  # Nomes internos com prefixo para não esconder a variável do chamador (o printf -v grava nela).
+  local _dest="$1" _txt="$2" _pad="${3:-}" _lido
+  if [ -n "$_pad" ]; then printf '%s [%s]: ' "$_txt" "$_pad"; else printf '%s: ' "$_txt"; fi
+  IFS= read -r _lido || fim_da_entrada
+  [ -n "$_lido" ] || _lido="$_pad"
+  printf -v "$_dest" '%s' "$_lido"
 }
 
 sim_nao() { # <texto> <padrão: s|n>; devolve 0 para sim
@@ -271,8 +275,21 @@ valida_alvo() { # usa $repo ou $org; confere se o gh é administrador
   fi
 }
 
+# Monta, no array $base do chamador, os argumentos comuns às chamadas ao próprio script (nunca contêm o token).
+montar_base() {
+  local v
+  base=(--vps "$vps" --nome "$nome")
+  [ -z "$chave" ] || base+=(--chave "$chave")
+  [ -z "$rotulos" ] || base+=(--rotulos "$rotulos")
+  [ -z "$nome_github" ] || base+=(--nome-github "$nome_github")
+  [ "$sem_docker" -eq 0 ] || base+=(--sem-docker)
+  for v in "${extras[@]}"; do base+=(--var "$v"); done
+}
+
 assistente() {
   local mem="" cpu="" rot="" self="${BASH_SOURCE[0]}" alvo_texto padrao_nome resposta v
+  local saida reserva=1024 minimo=2048
+  local -a novos=()
   local -a base=() alvo=()
 
   printf 'Assistente do registrar.sh: instala um runner self-hosted numa VPS.\n'
@@ -352,24 +369,53 @@ assistente() {
     sim_nao "Instalar o Docker rootless do runner?" s || sem_docker=1
   fi
 
-  # Argumentos comuns às três chamadas (nunca contêm o token).
-  base=(--vps "$vps" --nome "$nome")
-  [ -z "$chave" ] || base+=(--chave "$chave")
-  [ -z "$rotulos" ] || base+=(--rotulos "$rotulos")
-  [ -z "$nome_github" ] || base+=(--nome-github "$nome_github")
-  [ "$sem_docker" -eq 0 ] || base+=(--sem-docker)
-  for v in "${extras[@]}"; do base+=(--var "$v"); done
+  montar_base
 
   # 5. Painel de decisão (somente leitura): sistema, Docker, instâncias, estado desta instância, avisos e
   # veredito. Leva a URL do alvo para apontar divergências. Se não couber, para antes de gerar qualquer token.
-  printf '\nPainel da VPS (somente leitura, não cria nada):\n\n'
-  if ! bash "$self" "${base[@]}" "${alvo[@]}" --so-checar < /dev/null; then
-    erro "o veredito é \"não cabe\" (ou o painel falhou); nada foi instalado." 1
-  fi
+  # Se o motivo incluir memória, oferece ajustar a reserva e o mínimo e reavaliar. A saída é capturada em
+  # variável (nada é gravado em disco).
+  while :; do
+    printf '\nPainel da VPS (somente leitura, não cria nada):\n\n'
+    if saida="$(bash "$self" "${base[@]}" "${alvo[@]}" --so-checar --quieto < /dev/null 2>&1)"; then
+      printf '%s\n' "$saida"; break
+    fi
+    printf '%s\n' "$saida"
+    if ! grep -q '^VEREDITO: não cabe:.*memória' <<< "$saida"; then
+      erro "o veredito é \"não cabe\" (ou o painel falhou); nada foi instalado." 1
+    fi
+    printf '\nO runner não cabe por falta de memória. Saídas possíveis:\n'
+    printf '  - liberar memória na VPS (o painel mostra quanto falta) ou usar uma VPS maior;\n'
+    printf '  - reduzir a reserva do resto da VPS (RESERVA_MB) e/ou o mínimo do runner (MEM_MIN_MB): passa a\n'
+    printf '    caber, mas sobra menos folga para os outros serviços crescerem. O limite do runner continua\n'
+    printf '    valendo: um job que estourar a memória derruba só o runner, desde que sobre folga no resto da VPS;\n'
+    printf '  - manter os workflows pesados nos runners do GitHub.\n\n'
+    if ! sim_nao "Ajustar a reserva e o mínimo de memória e avaliar de novo?" n; then
+      erro "o veredito é \"não cabe\"; nada foi instalado." 1
+    fi
+    while :; do
+      pergunta resposta "Reserva de memória para o resto da VPS em MB" "$reserva"
+      if [[ "$resposta" =~ ^[0-9]+$ ]] && [ "$resposta" -gt 0 ]; then reserva="$resposta"; break; fi
+      aviso "use um número inteiro maior que zero."
+    done
+    while :; do
+      pergunta resposta "Memória mínima para o runner em MB" "$minimo"
+      if [[ "$resposta" =~ ^[0-9]+$ ]] && [ "$resposta" -gt 0 ]; then minimo="$resposta"; break; fi
+      aviso "use um número inteiro maior que zero."
+    done
+    if [ "$minimo" -lt 1024 ]; then aviso "mínimo muito baixo: jobs com Docker podem ser mortos por falta de memória."; fi
+    novos=()
+    for v in "${extras[@]}"; do
+      case "$v" in RESERVA_MB=* | MEM_MIN_MB=*) ;; *) novos+=("$v") ;; esac
+    done
+    extras=("${novos[@]}" "RESERVA_MB=$reserva" "MEM_MIN_MB=$minimo")
+    montar_base
+  done
 
   # 6. Resumo e confirmação.
   printf '\nResumo:\n  VPS:        %s\n  Alvo:       %s\n  Instância:  %s (usuário runner-%s na VPS)\n' "$vps" "$alvo_texto" "$nome" "$nome"
   printf '  Docker rootless: %s\n' "$([ "$sem_docker" -eq 0 ] && echo sim || echo não)"
+  if [ "${#extras[@]}" -gt 0 ]; then printf '  Ajustes:    %s\n' "${extras[*]}"; fi
   if ! sim_nao "Instalar agora?" n; then
     printf 'Nada foi instalado.\n'; exit 0
   fi
@@ -379,7 +425,7 @@ assistente() {
     erro "a instalação falhou (veja as mensagens acima)." 1
   fi
   printf '\nEstado da instância:\n'
-  bash "$self" "${base[@]}" --status < /dev/null || aviso "não consegui ler o estado agora; rode --status depois."
+  bash "$self" "${base[@]}" --status --quieto < /dev/null || aviso "não consegui ler o estado agora; rode --status depois."
   printf '\nPara repetir sem o assistente:\n  ./registrar.sh'
   for resposta in "${base[@]}" "${alvo[@]}"; do printf ' %q' "$resposta"; done
   printf '\n'

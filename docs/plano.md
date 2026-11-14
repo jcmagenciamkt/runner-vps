@@ -187,6 +187,22 @@ Modificar: `README.md` (Task 5).
 - [x] README: painel.
 - [x] Commit: `feat: --so-checar vira painel de decisão (sistema, Docker, instâncias, estado, avisos) e o assistente o mostra antes de confirmar`.
 
+## Task 10: "não cabe" por memória: números claros, ajuste guiado e painel sem ruído
+
+**Files:** modificar `instalar.sh`, `registrar.sh`, `testes/test_painel.sh`, `testes/test_assistente.sh`, `testes/test_registrar.sh`, `README.md`.
+**Regras:** design 4.4 e 4.6. O ajuste só mexe em `RESERVA_MB` e `MEM_MIN_MB`; nunca tira o limite de memória do runner.
+- [x] Testes primeiro:
+  1. `instalar.sh --so-checar` com memória insuficiente: uma linha de números antes do veredito (quanto sobraria, mínimo, MB disponíveis necessários com a reserva atual e quantos faltam); o veredito continua sendo a última linha; quando cabe, a linha não aparece;
+  2. `registrar.sh --quieto` esconde as linhas `==>` de andamento; sem ele, continuam aparecendo;
+  3. assistente: o painel (`--so-checar` e `--status`) sai sem a linha `==> Enviando…`; a instalação continua com ela;
+  4. "não cabe" por memória: explica as saídas e pergunta se quer ajustar; "não" sai com 1, sem token e sem instalar;
+  5. "sim": pergunta `RESERVA_MB` e `MEM_MIN_MB` (padrão: 1024 e 2048 na primeira vez; depois, os últimos valores), repete respostas inválidas (`abc`, `0`; vazio assume o padrão), reavalia o painel com os novos valores; se couber, segue para o resumo (que mostra os ajustes) e a confirmação, e a instalação leva `RESERVA_MB` e `MEM_MIN_MB`; o token só é gerado depois da confirmação;
+  6. se continuar não cabendo após o ajuste, pergunta de novo, e "não" sai com 1;
+  7. "não cabe" por outro motivo (disco): não oferece ajuste e sai com 1.
+- [x] Implementar (a linha de números no `diagnostico()`, `--quieto` no `registrar.sh`, o laço de ajuste no assistente; o assistente captura a saída do painel em variável, sem gravar arquivo).
+- [x] README: ajuste guiado e `--quieto`.
+- [x] Commit: `feat: assistente oferece ajustar reserva e mínimo de memória quando não cabe, e o painel mostra quanto falta`.
+
 ## Fecho
 
 - [x] `shellcheck` limpo e `testes/rodar.sh` verde, local e no CI do projeto.
