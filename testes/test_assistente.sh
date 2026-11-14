@@ -131,6 +131,13 @@ afirmar_sem "$TMP/err" "$TOKEN_FALSO"
 afirmar_sem "$TMP/chamadas.log" "$TOKEN_FALSO"
 afirmar "o token foi mesmo enviado na instalação (a ausência acima não é por acaso)" "$(grep -q "export RUNNER_TOKEN=$TOKEN_FALSO" "$(inst_stdin)"; echo $?)"
 
+# 1b. o painel: título, URL do alvo no --so-checar e nunca o token
+afirmar "o painel tem título 'Painel da VPS'" "$(saida_tem 'Painel da VPS'; echo $?)"
+afirmar "o --so-checar leva o RUNNER_URL do alvo e nunca o RUNNER_TOKEN" \
+  "$([ "$(grep -l 'export RUNNER_URL=https://github.com/dono/meu-repo' "$TMP"/stdin.* | xargs grep -L RUNNER_TOKEN | wc -l)" -eq 1 ] && echo 0 || echo 1)"
+afirmar "o painel vem antes da pergunta de confirmação" \
+  "$([ "$(grep -n 'Painel da VPS' "$TMP/out" | head -n 1 | cut -d: -f1)" -lt "$(grep -n 'Instalar agora?' "$TMP/out" | head -n 1 | cut -d: -f1)" ] && echo 0 || echo 1)"
+
 # 2. validação com repetição: nada inválido chega ao ssh ou ao gh
 novo_cenario
 codigo="$(assistente 'root@vps' 'vps:22' '-x' vps.exemplo abc 0 70000 '' 'ro ot' '' '' dono/a/b dono/repo 'Ex Emplo' exemplo n s)"

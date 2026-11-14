@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # VPS falsa para testar o instalar.sh. Uso: `source testes/harness.sh; source testes/vps-falsa.sh; montar_vps_falsa`.
-# Parâmetros (ambiente, com padrão): MEM_TOTAL_MB=8192 MEM_LIVRE_MB=6144 CPUS=4 DISCO_LIVRE_GB=40.
+# Parâmetros (ambiente, com padrão): MEM_TOTAL_MB=8192 MEM_LIVRE_MB=6144 SWAP_MB=0 CPUS=4 DISCO_LIVRE_GB=40.
 # Exporta as variáveis de substituição da lista fechada do plano. O instalador real nunca é tocado.
 
 montar_vps_falsa() {
-  local total="${MEM_TOTAL_MB:-8192}" livre="${MEM_LIVRE_MB:-6144}" cpus="${CPUS:-4}" disco="${DISCO_LIVRE_GB:-40}"
+  local total="${MEM_TOTAL_MB:-8192}" livre="${MEM_LIVRE_MB:-6144}" swap="${SWAP_MB:-0}" cpus="${CPUS:-4}" disco="${DISCO_LIVRE_GB:-40}"
 
   export RAIZ="$TMP/raiz"
   mkdir -p "$RAIZ/etc/systemd/system" "$RAIZ/opt" "$RAIZ/run" "$RAIZ/proc" "$RAIZ/var/tmp"
@@ -13,8 +13,18 @@ montar_vps_falsa() {
 
   # /proc/meminfo falso (em kB, como o real)
   export MEMINFO_FILE="$RAIZ/proc/meminfo"
-  printf 'MemTotal:       %s kB\nMemFree:        %s kB\nMemAvailable:   %s kB\n' \
-    "$((total * 1024))" "$((livre * 1024))" "$((livre * 1024))" > "$MEMINFO_FILE"
+  printf 'MemTotal:       %s kB\nMemFree:        %s kB\nMemAvailable:   %s kB\nSwapTotal:      %s kB\n' \
+    "$((total * 1024))" "$((livre * 1024))" "$((livre * 1024))" "$((swap * 1024))" > "$MEMINFO_FILE"
+
+  # Sistema falso para o painel (--so-checar): systemd presente, uname, carga, user namespaces liberados.
+  mkdir -p "$RAIZ/run/systemd/system" "$RAIZ/proc/sys/user" "$RAIZ/proc/sys/kernel"
+  printf '#!/usr/bin/env bash\ncase "${1:-}" in -m) echo x86_64 ;; -r) echo 6.1.0-falso ;; *) echo Linux ;; esac\n' > "$TMP/bin/uname-falso"
+  printf '0.10 0.20 0.30 1/100 1234\n' > "$RAIZ/proc/loadavg"
+  printf '15000\n' > "$RAIZ/proc/sys/user/max_user_namespaces"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/bin/newuidmap-falso"
+  chmod +x "$TMP/bin/uname-falso" "$TMP/bin/newuidmap-falso"
+  export UNAME_CMD="$TMP/bin/uname-falso" LOADAVG_FILE="$RAIZ/proc/loadavg" USERNS_FILE="$RAIZ/proc/sys/user/max_user_namespaces" \
+         APPARMOR_USERNS_FILE="$RAIZ/proc/sys/kernel/apparmor_restrict_unprivileged_userns" NEWUIDMAP_CMD="$TMP/bin/newuidmap-falso"
 
   # nproc e df falsos. DF_CMD imita `df -BG --output=avail <caminho>`: cabeçalho e "  40G".
   printf '#!/usr/bin/env bash\necho %s\n' "$cpus" > "$TMP/bin/nproc-falso"

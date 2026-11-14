@@ -15,7 +15,7 @@ O runner roda num usuário próprio, **sem sudo e sem o grupo `docker`**, com um
 ## Instalar com um comando
 
 ```bash
-# 1. só o diagnóstico: cabe ou não cabe (não cria nada, não precisa de token)
+# 1. só o painel de decisão: sistema, recursos, instâncias, estado e veredito (não cria nada, não precisa de token)
 ./registrar.sh --vps root@<vps>:<porta> --nome <nome> --so-checar --chave ~/.ssh/<chave>
 
 # 2. instalar
@@ -39,10 +39,25 @@ Ele pergunta, valida e só instala depois da sua confirmação:
 3. repositório (`<dono>/<repo>`) ou organização, conferindo que você é **administrador**;
 4. nome da instância (sugerido a partir do alvo), avisando se **já existe** na VPS;
 5. opções avançadas, só se você quiser: memória máxima, cota de CPU, rótulos e Docker rootless;
-6. o diagnóstico `--so-checar`: se der "não cabe", para aí, sem gerar token;
+6. o **painel de decisão** (veja abaixo), sempre antes da confirmação e seja qual for a forma de conexão: se o veredito for "não cabe", para aí, sem gerar token;
 7. um resumo e a confirmação (padrão: não). Só então instala, mostra o `--status` e imprime o **comando equivalente sem o assistente**, para repetir noutra VPS.
 
 Respostas inválidas repetem a pergunta; Ctrl-C ou fim da entrada cancelam sem instalar. O assistente **não grava nada em disco** (nem perfil, nem histórico) e **nunca pergunta o token**: ele é gerado pelo `gh` só no passo de instalação. Argumentos que você já passar (`--vps`, `--repo`, `--nome`…) pulam as perguntas deles. O `--vps` também aceita o nome de um `Host` do `~/.ssh/config` (`./registrar.sh --vps meu-servidor --repo <dono>/<repo> --nome <nome>`), sem `usuário@` nem `:porta`. Como o `ssh` roda com `BatchMode`, uma chave com senha precisa estar no `ssh-agent`.
+
+### Painel de decisão (`--so-checar`)
+
+`./registrar.sh --vps … --nome <nome> --so-checar` (e o assistente, antes de pedir a confirmação) mostra tudo o que ajuda a decidir se vale instalar. **É somente leitura**: não cria, não grava, não reinicia nada e nunca imprime o token.
+
+| Seção | O que mostra |
+| --- | --- |
+| **Sistema** | distribuição, arquitetura, kernel, se há `systemd` e `apt-get`, carga (1, 5 e 15 min) |
+| **Docker rootless** | se está ligado, se o Docker já está instalado, se o repositório apt do Docker já está configurado, `max_user_namespaces`, `newuidmap` |
+| **Instâncias nesta VPS** | cada uma com URL, `MemoryMax`, `CPUQuota` e estado do serviço (a atual marcada), mais a memória reservada no total |
+| **Esta instância** | instalação nova ou já instalada (reaplicar é idempotente), usuário, serviço, registro `.runner`, URL configurada |
+| **Avisos** | URL configurada diferente da informada; AppArmor restringindo user namespaces com rootless ligado |
+| **Recursos e veredito** | swap, memória (total, disponível, reserva, outras instâncias), CPUs, disco livre e, por último, `VEREDITO: cabe (…)` ou `não cabe: <motivos>` |
+
+Motivos de "não cabe": memória, CPU, disco, **`systemd` ausente**, **`apt-get` ausente** e **user namespaces desligados** (com `DOCKER_ROOTLESS=1`). Os três últimos só valem quando o problema é detectado de verdade: se o sistema não informa o dado (por exemplo, não existe `max_user_namespaces`), o painel mostra "desconhecido" e não bloqueia. A instalação usa o mesmo veredito e recusa quando não cabe.
 
 Outras formas:
 
